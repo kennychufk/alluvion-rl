@@ -6,6 +6,7 @@ import scipy.special as sc
 from sklearn.metrics import mean_squared_error
 import glob
 import argparse
+from optim import AdamOptim
 
 from matplotlib import pyplot as plt
 
@@ -13,6 +14,7 @@ parser = argparse.ArgumentParser(description='Hagen poiseuille initializer')
 
 parser.add_argument('--mode', type=str, default='fill')
 args = parser.parse_args()
+
 
 def approximate_half_life(dynamic_viscosity, density0, pipe_radius):
     j0_zero = sc.jn_zeros(0, 1)[0]
@@ -37,6 +39,7 @@ def developing_hagen_poiseuille(r, t, dynamic_viscosity, density0, a,
     return density0 * a / dynamic_viscosity * (
         0.25 * (pipe_radius * pipe_radius - r * r) -
         pipe_radius * pipe_radius * 2 * accumulation)
+
 
 kM = 4
 kQ = 10
@@ -95,22 +98,25 @@ pile.build_grids(4 * kernel_radius)
 pile.reallocate_kinematics_on_device()
 cn.contact_tolerance = particle_radius
 
-max_num_particles = int(np.pi * pipe_radius * pipe_radius * cylinder_length * density0 /
-                        particle_mass)
+max_num_particles = int(np.pi * pipe_radius * pipe_radius * cylinder_length *
+                        density0 / particle_mass)
 # grid
 grid_res = al.uint3(int(kQ * 2), int(kM * 2), int(kQ * 2))
 grid_offset = al.int3(-kQ, -kM, -kQ)
-max_num_particles_per_cell = 64
-max_num_neighbors_per_particle = 64
 cni.grid_res = grid_res
 cni.grid_offset = grid_offset
-cni.max_num_particles_per_cell = max_num_particles_per_cell
-cni.max_num_neighbors_per_particle = max_num_neighbors_per_particle
+cni.max_num_particles_per_cell = 64
+cni.max_num_neighbors_per_particle = 64
 cn.set_wrap_length(grid_res.y * kernel_radius)
 
-solver = dp.SolverDf(runner, pile, dp, max_num_particles, grid_res,
-                     max_num_particles_per_cell,
-                     max_num_neighbors_per_particle, True)
+solver = dp.SolverDf(runner,
+                     pile,
+                     dp,
+                     max_num_particles,
+                     grid_res,
+                     enable_surface_tension=False,
+                     enable_vorticity=False,
+                     graphical=True)
 particle_normalized_attr = dp.create_graphical((max_num_particles), 1)
 solver.dt = 1e-3
 solver.max_dt = 1e-3
@@ -153,13 +159,14 @@ class FillSampling:
         self.sample_x = dp.create_coated((self.num_samples), 3)
         self.sample_data1 = dp.create_coated((self.num_samples), 1)
         self.sample_neighbors = dp.create_coated(
-            (self.num_samples, max_num_neighbors_per_particle), 4)
+            (self.num_samples, dp.cni.max_num_neighbors_per_particle), 4)
         self.sample_num_neighbors = dp.create_coated((self.num_samples), 1,
                                                      np.uint32)
-        runner.launch_create_fluid_cylinder(
-            256, self.sample_x, self.num_samples, pipe_radius - cn.particle_radius * 2,
-            self.num_samples_per_slice,
+        runner.launch_create_fluid_cylinder_sunflower(
+            256, self.sample_x, self.num_samples,
+            pipe_radius - cn.particle_radius * 2, self.num_samples_per_slice,
             cylinder_length / self.num_sample_slices, cylinder_length * -0.5)
+
 
 class OptimSampling:
     def __init__(self, dp, cn, cylinder_length, pipe_radius, ts):
@@ -170,20 +177,27 @@ class OptimSampling:
         self.sample_x = dp.create_coated((self.num_samples), 3)
         self.sample_data3 = dp.create_coated((self.num_samples), 3)
         self.sample_neighbors = dp.create_coated(
-            (self.num_samples, max_num_neighbors_per_particle), 4)
+            (self.num_samples, dp.cni.max_num_neighbors_per_particle), 4)
         self.sample_num_neighbors = dp.create_coated((self.num_samples), 1,
                                                      np.uint32)
-        sample_x_host = np.zeros((self.num_samples, 3), dp.default_dtype)
+        self.sample_x_host = np.zeros((self.num_samples, 3), dp.default_dtype)
         distance_between_sample_planes = cylinder_length / self.num_sample_planes
         for i in range(self.num_samples):
-          plane_id = i // self.num_samples_per_plane
-          id_in_plane = i % self.num_samples_per_plane
-          sample_x_host[i] = np.array([ pipe_radius * 2 / (self.num_samples_per_plane + 1) * (id_in_plane - self.num_samples_per_plane / 2), cylinder_length * -0.5+ distance_between_sample_planes * plane_id, 0], dp.default_dtype)
-        self.sample_x.set(sample_x_host)
+            plane_id = i // self.num_samples_per_plane
+            id_in_plane = i % self.num_samples_per_plane
+            self.sample_x_host[i] = np.array([
+                pipe_radius * 2 / (self.num_samples_per_plane + 1) *
+                (id_in_plane - self.num_samples_per_plane / 2),
+                cylinder_length * -0.5 +
+                distance_between_sample_planes * plane_id, 0
+            ], dp.default_dtype)
+        self.sample_x.set(self.sample_x_host)
         self.reset()
+
     def reset(self):
         self.sampling_cursor = 0
-        self.vx = np.zeros((len(self.ts), self.num_samples_per_plane), dp.default_dtype)
+        self.vx = np.zeros((len(self.ts), self.num_samples_per_plane),
+                           dp.default_dtype)
 
 
 fsampling = FillSampling(dp, cn, cylinder_length, pipe_radius)
@@ -201,8 +215,8 @@ display_proxy.set_clip_planes(particle_radius * 10, pipe_radius * 20)
 
 def initialize_uniform():
     naive_num_particles = int(np.pi * (pipe_radius - particle_radius) *
-                              (pipe_radius - particle_radius) * cylinder_length *
-                              cn.density0 / particle_mass)
+                              (pipe_radius - particle_radius) *
+                              cylinder_length * cn.density0 / particle_mass)
     initial_num_particles = naive_num_particles
     slice_distance = particle_radius * 2
     num_slices = int(cylinder_length / slice_distance)
@@ -210,9 +224,10 @@ def initialize_uniform():
     initial_num_particles = num_particles_per_slice * num_slices
 
     dp.map_graphical_pointers()
-    runner.launch_create_fluid_cylinder(
-        256, solver.particle_x, initial_num_particles, pipe_radius - particle_radius * 2,
-        num_particles_per_slice, particle_radius * 2, cylinder_length * -0.5)
+    runner.launch_create_fluid_cylinder_sunflower(
+        256, solver.particle_x, initial_num_particles,
+        pipe_radius - particle_radius * 2, num_particles_per_slice,
+        particle_radius * 2, cylinder_length * -0.5)
     dp.unmap_graphical_pointers()
     solver.num_particles = initial_num_particles
 
@@ -222,11 +237,13 @@ def initialize_with_file(solver, filename):
     solver.num_particles = solver.particle_x.read_file(filename)
     dp.unmap_graphical_pointers()
 
+
 def reset_solver_df(solver):
     solver.particle_dfsph_factor.set_zero()
     solver.particle_kappa.set_zero()
     solver.particle_kappa_v.set_zero()
     solver.particle_density_adv.set_zero()
+
 
 def randomize_speed(dp, solver):
     new_particle_v = np.random.normal(0, 0.2, size=(solver.num_particles, 3))
@@ -295,12 +312,9 @@ def fill(dp, solver, fluid_stat, fill_state, target_num_particles_range):
         ], dp.default_dtype)
         fill_state.next_emission_t = solver.t + particle_radius * 2 / LA.norm(
             new_particle_v)
-        dp.coat(solver.particle_x).set(
-            new_particle_pos,
-            new_particle_pos.itemsize * 3 * solver.num_particles)
+        dp.coat(solver.particle_x).set(new_particle_pos, solver.num_particles)
         # TODO: refactor Python binding to change byte_offset to element_offset
-        dp.coat(solver.particle_v).set(
-            new_particle_v, new_particle_v.itemsize * 3 * solver.num_particles)
+        dp.coat(solver.particle_v).set(new_particle_v, solver.num_particles)
         solver.num_particles += 1
         print("num_particles", solver.num_particles)
         fill_state.last_emission_t = solver.t
@@ -325,12 +339,11 @@ def fill(dp, solver, fluid_stat, fill_state, target_num_particles_range):
             solver.particle_num_neighbors, solver.particle_density,
             solver.particle_boundary_xj, solver.particle_boundary_volume,
             solver.num_particles)
-        runner.launch_sample_fluid(256, fsampling.sample_x, solver.particle_x,
-                                   solver.particle_density,
-                                   solver.particle_density,
-                                   fsampling.sample_neighbors,
-                                   fsampling.sample_num_neighbors,
-                                   fsampling.sample_data1, fsampling.num_samples)
+        runner.launch_sample_fluid(
+            256, fsampling.sample_x, solver.particle_x,
+            solver.particle_density, solver.particle_density,
+            fsampling.sample_neighbors, fsampling.sample_num_neighbors,
+            fsampling.sample_data1, fsampling.num_samples)
         print(fsampling.sample_data1.get().reshape(-1, 128)[:, 0])
     fluid_stat.step_id += 1
 
@@ -371,6 +384,7 @@ def distribute(dp, solver, fluid_stat):
     calculate_stat(solver, fluid_stat)
     fluid_stat.step_id += 1
 
+
 def pressurize(dp, solver, osampling):
     if solver.t >= osampling.ts[osampling.sampling_cursor]:
         solver.pid_length.set_zero()
@@ -388,17 +402,20 @@ def pressurize(dp, solver, osampling):
             solver.particle_boundary_xj, solver.particle_boundary_volume,
             solver.num_particles)
         runner.launch_sample_fluid(256, osampling.sample_x, solver.particle_x,
-                                   solver.particle_density,
-                                   solver.particle_v,
+                                   solver.particle_density, solver.particle_v,
                                    osampling.sample_neighbors,
                                    osampling.sample_num_neighbors,
-                                   osampling.sample_data3, osampling.num_samples)
-        sample_vx = osampling.sample_data3.get().reshape(-1, osampling.num_samples_per_plane, 3)[:,:,1]
-        osampling.vx[osampling.sampling_cursor] = np.mean(sample_vx, axis =0)
+                                   osampling.sample_data3,
+                                   osampling.num_samples)
+        sample_vx = osampling.sample_data3.get().reshape(
+            -1, osampling.num_samples_per_plane, 3)[:, :, 1]
+        osampling.vx[osampling.sampling_cursor] = np.mean(sample_vx, axis=0)
         osampling.sampling_cursor += 1
     solver.step_wrap1()
 
-def evaluate_hagen_poiseuille(dp, solver, x_filename, osampling, viscosity, boundary_viscosity, acc, ts):
+
+def evaluate_hagen_poiseuille(dp, solver, x_filename, osampling, viscosity,
+                              boundary_viscosity, acc, ts):
     osampling.reset()
     cn.gravity = dp.f3(0, acc, 0)
     cn.viscosity = viscosity
@@ -417,7 +434,7 @@ def evaluate_hagen_poiseuille(dp, solver, x_filename, osampling, viscosity, boun
     step_id = 0
     while osampling.sampling_cursor < len(ts):
         pressurize(dp, solver, osampling)
-        step_id +=1
+        step_id += 1
         # if (step_id % 20 == 0):
         #     solver.normalize(solver.particle_v, particle_normalized_attr, 0, 0.5)
         #     dp.unmap_graphical_pointers()
@@ -428,15 +445,15 @@ def evaluate_hagen_poiseuille(dp, solver, x_filename, osampling, viscosity, boun
 
 
 # across a variety of speed. Fixed radius. Fixed target dynamic viscosity. Look at one instant
-def compute_ground_truth_and_simulate(param, dp, solver, osampling, x_filename, pipe_radius,
-                                      ts, density0,
-                                      accelerations, dynamic_viscosity):
+def compute_ground_truth_and_simulate(param, dp, solver, osampling, x_filename,
+                                      pipe_radius, ts, density0, accelerations,
+                                      dynamic_viscosity):
     viscosity = param[0]
     boundary_viscosity = param[1]
 
     num_samples_per_side = osampling.num_samples_per_plane // 2
-    rs = pipe_radius * 2 / (osampling.num_samples_per_plane + 1) * (np.arange(osampling.num_samples_per_plane) -
-                                                num_samples_per_side)
+    rs = pipe_radius * 2 / (osampling.num_samples_per_plane + 1) * (
+        np.arange(osampling.num_samples_per_plane) - num_samples_per_side)
 
     ground_truth = np.zeros(
         (len(accelerations), len(ts), osampling.num_samples_per_plane))
@@ -446,62 +463,32 @@ def compute_ground_truth_and_simulate(param, dp, solver, osampling, x_filename, 
             ground_truth[acc_id, t_id] = developing_hagen_poiseuille(
                 rs, t, dynamic_viscosity, density0, acc, pipe_radius, 100)
 
-        result = evaluate_hagen_poiseuille(dp, solver, x_filename, osampling, viscosity, boundary_viscosity, acc, ts)
+        result = evaluate_hagen_poiseuille(dp, solver, x_filename, osampling,
+                                           viscosity, boundary_viscosity, acc,
+                                           ts)
         simulated[acc_id] = result.reshape(len(ts), -1)
 
     # fig = plt.figure(figsize=(4, 5), dpi=110)
     # ax = fig.add_subplot()
-    plt.plot(ground_truth[0][0])
-    plt.show()
-    plt.plot(simulated[0][0])
-    plt.show()
+    # plt.plot(ground_truth[0][0])
+    # plt.show()
+    # plt.plot(simulated[0][0])
+    # plt.show()
     return ground_truth, simulated
 
 
-def evaluate_loss(param, dp, solver, osampling, x_filename, pipe_radius, 
-                  ts, density0, accelerations, dynamic_viscosity):
+def evaluate_loss(param, dp, solver, osampling, x_filename, pipe_radius, ts,
+                  density0, accelerations, dynamic_viscosity):
     ground_truth, simulated = compute_ground_truth_and_simulate(
-        param, dp, solver, osampling, x_filename, pipe_radius, ts,
-        density0, accelerations, dynamic_viscosity)
+        param, dp, solver, osampling, x_filename, pipe_radius, ts, density0,
+        accelerations, dynamic_viscosity)
     return mean_squared_error(ground_truth.flatten(), simulated.flatten())
 
 
-def evaluate_and_derive(x, f, fd_size, *args):
-    f_center = f(x, *args)
-    n = len(x)
-    gradient = np.zeros(n)
-    for i in range(n):
-        delta_vector = np.zeros(n)
-        delta_vector[i] = fd_size
-        f_plus = f(x + delta_vector, *args)
-        gradient[i] = (f_plus - f_center) / delta_vector[i]
-    return f_center, gradient
-
-
-class AdamOptim:
-    def __init__(self, x, lr, beta1=0.9, beta2=0.999, eps=1e-8):
-        self.m = np.zeros_like(x)
-        self.v = np.zeros_like(x)
-        self.lr = lr
-        self.beta1 = beta1
-        self.beta2 = beta2
-        self.eps = eps
-        self.t = 0
-
-    def update(self, f, x, fd_size, *args):
-        loss, g = evaluate_and_derive(x, f, fd_size, *args)
-        new_x = np.zeros_like(x)
-        self.m = self.beta1 * self.m + (1.0 - self.beta1) * g
-        self.v = self.beta2 * self.v + (1.0 - self.beta2) * g * g
-        mhat = self.m / (1.0 - self.beta1**(self.t + 1))
-        vhat = self.v / (1.0 - self.beta2**(self.t + 1))
-        new_x = x - self.lr * mhat / (np.sqrt(vhat) + self.eps)
-        self.t += 1
-        return new_x, loss, g
-
 def optimize(dp, solver, num_particles, dynamic_viscosity):
     x_filename = f"{distributed_directory}/{num_particles}.alu"
-    approx_half_life = approximate_half_life(dynamic_viscosity, density0, pipe_radius)
+    approx_half_life = approximate_half_life(dynamic_viscosity, density0,
+                                             pipe_radius)
     ts = approx_half_life * lambda_factors
     osampling = OptimSampling(dp, cn, cylinder_length, pipe_radius, ts)
 
@@ -513,8 +500,8 @@ def optimize(dp, solver, num_particles, dynamic_viscosity):
     for iteration in range(30):
         current_x = x
         x, loss, grad = adam.update(evaluate_loss, x,
-                                    np.min(x) * 1e-2, dp, solver, osampling, x_filename,
-                                    pipe_radius, lambda_factors,
+                                    np.min(x) * 1e-2, dp, solver, osampling,
+                                    x_filename, pipe_radius, lambda_factors,
                                     density0, accelerations, dynamic_viscosity)
         if (loss < best_loss):
             best_loss = loss
@@ -551,4 +538,3 @@ elif args.mode == 'distribute':
             display_proxy.draw()
 elif args.mode == 'optimize':
     optimize(dp, solver, 24094, dynamic_viscosity)
-
