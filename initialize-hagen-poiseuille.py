@@ -43,7 +43,7 @@ def developing_hagen_poiseuille(r, t, dynamic_viscosity, density0, a,
 
 kM = 4
 kQ = 10
-particle_radius = 0.00125
+particle_radius = 2**-11
 target_num_particles_range = (23888, 25000)
 lambda_factors = np.array([1.125])
 accelerations = np.array([1e-3, 5e-4])
@@ -209,7 +209,7 @@ display_proxy.add_particle_shading_program(solver.particle_x,
                                            particle_normalized_attr,
                                            colormap_tex,
                                            solver.particle_radius, solver)
-display_proxy.set_camera(dp.f3(0, 0, pipe_radius * 6), dp.f3(0, 0, 0))
+display_proxy.set_camera(al.float3(0, 0, pipe_radius * 6), al.float3(0, 0, 0))
 display_proxy.set_clip_planes(particle_radius * 10, pipe_radius * 20)
 
 
@@ -494,10 +494,10 @@ def optimize(dp, solver, num_particles, dynamic_viscosity):
 
     best_loss = np.finfo(np.float64).max
     best_x = None
-    x = np.array([3.61355447e-06, 6.46472874e-06])
-    adam = AdamOptim(x, lr=1e-8)
+    x = np.array([1.37916076e-05, 9.96210578e-06])
+    adam = AdamOptim(x, lr=1e-9)
 
-    for iteration in range(30):
+    for iteration in range(100):
         current_x = x
         x, loss, grad = adam.update(evaluate_loss, x,
                                     np.min(x) * 1e-2, dp, solver, osampling,
@@ -537,4 +537,4 @@ elif args.mode == 'distribute':
             dp.unmap_graphical_pointers()
             display_proxy.draw()
 elif args.mode == 'optimize':
-    optimize(dp, solver, 24094, dynamic_viscosity)
+    optimize(dp, solver, 24114, dynamic_viscosity)

@@ -12,7 +12,7 @@ particle_radius = 2**-11
 kernel_radius = particle_radius * 4
 density0 = 1000.0
 cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radius
-volume_relative_to_cube = 0.80
+volume_relative_to_cube = 0.84
 particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 gravity = dp.f3(0, -9.81, 0)
 
@@ -30,7 +30,7 @@ pile = dp.Pile(dp, max_num_contacts)
 
 container_radius = 30e-3
 container_height = 60e-3
-fluid_y_range = (-container_height / 2, container_height / 2)
+fluid_y_range = (-container_height / 2, container_height / 2 * 1.1)
 capsule_distance = dp.CapsuleDistance(container_radius, container_height)
 # capsule_distance = dp.CylinderDistance(container_radius, container_height, 0)
 pile.add(capsule_distance,
@@ -48,24 +48,44 @@ pile.add(capsule_distance,
 
 inset_factor = 1.7
 
-sphere_radius = 15e-3
-sphere_distance = dp.SphereDistance(sphere_radius -
-                                    particle_radius * inset_factor)
-sphere_mesh = al.Mesh()
-sphere_mesh.set_uv_sphere(sphere_radius, 24, 24)
-pile.add(sphere_distance,
-         al.uint3(64, 64, 64),
+# sphere_radius = 15e-3
+# sphere_distance = dp.SphereDistance(sphere_radius)
+# sphere_mesh = al.Mesh()
+# sphere_mesh.set_uv_sphere(sphere_radius, 24, 24)
+# pile.add(sphere_distance,
+#          al.uint3(64, 64, 64),
+#          sign=1,
+#          thickness=-particle_radius * inset_factor,
+#          collision_mesh=al.Mesh(),
+#          mass=0,
+#          restitution=0,
+#          friction=0,
+#          inertia_tensor=dp.f3(1, 1, 1),
+#          x=dp.f3(0, container_height / 2 + container_radius + sphere_radius,
+#                  0.0),
+#          q=dp.f4(0, 0, 0, 1),
+#          display_mesh=sphere_mesh)
+cylinder_radius = 3.00885e-3
+cylinder_height = 38.5e-3
+cylinder_comy = -8.8521e-3
+cylinder_mass = 1.06e-3
+cylinder_mesh = al.Mesh()
+cylinder_mesh.set_cylinder(cylinder_radius, cylinder_height, 24, 24)
+cylinder_mesh.translate(dp.f3(0, -cylinder_comy, 0))
+cylinder_distance = dp.CylinderDistance(cylinder_radius, cylinder_height,
+                                        cylinder_comy)
+pile.add(cylinder_distance,
+         al.uint3(20, 128, 20),
          sign=1,
-         thickness=0,
-         collision_mesh=al.Mesh(),
+         thickness=-particle_radius * inset_factor,
+         collision_mesh=cylinder_mesh,
          mass=0,
          restitution=0,
          friction=0,
-         inertia_tensor=dp.f3(1, 1, 1),
-         x=dp.f3(0, container_height / 2 + container_radius + sphere_radius,
-                 0.0),
+         inertia_tensor=dp.f3(7.91134e-8, 2.94462e-9, 7.91134e-8),
+         x=dp.f3(0, 50e-3, 0.0),
          q=dp.f4(0, 0, 0, 1),
-         display_mesh=sphere_mesh)
+         display_mesh=cylinder_mesh)
 
 pile.build_grids(4 * kernel_radius)
 pile.reallocate_kinematics_on_device()
@@ -86,8 +106,14 @@ cni.grid_offset = grid_offset
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
-solver = dp.SolverDf(runner, pile, dp, max_num_particles, grid_res,
-                     enable_surface_tension = False, enable_vorticity = False, graphical=True)
+solver = dp.SolverDf(runner,
+                     pile,
+                     dp,
+                     max_num_particles,
+                     grid_res,
+                     enable_surface_tension=False,
+                     enable_vorticity=False,
+                     graphical=True)
 particle_normalized_attr = dp.create_graphical((max_num_particles), 1)
 
 solver.dt = 1e-6
@@ -118,7 +144,7 @@ display_proxy.add_particle_shading_program(solver.particle_x,
                                            solver.particle_radius, solver)
 display_proxy.add_pile_shading_program(pile)
 
-sphere_target_y = container_height * -0.5
+sphere_target_y = -43e-3
 sphere_target_reached = False
 num_stabilized = 0
 stabilization_target = 10
@@ -140,10 +166,7 @@ while True:
                                        solver.particle_force.get_shape()[1]).y
             buoyant_force_buffer[buoyant_force_cursor] = buoyant_force
             buoyant_force_cursor += 1
-            # print(runner.min(solver.particle_density, solver.num_particles), runner.max(solver.particle_density, solver.num_particles))
             if (buoyant_force_cursor >= len(buoyant_force_buffer) - 1):
-                np.save(f"{volume_relative_to_cube}-{inset_factor}.npy",
-                        buoyant_force_buffer)
                 print(inset_factor, ',', np.mean(buoyant_force_buffer))
                 # reset
                 inset_factor += 0.002
@@ -151,22 +174,34 @@ while True:
                 stabilization_target = 5
                 initial_placement = False
                 buoyant_force_cursor = 0
-                sphere_distance = dp.SphereDistance(sphere_radius -
-                                                    particle_radius *
-                                                    inset_factor)
+                # sphere_distance = dp.SphereDistance(sphere_radius)
+                # pile.replace(1,
+                #              sphere_distance,
+                #              al.uint3(64, 64, 64),
+                #              sign=1,
+                #              thickness= -particle_radius * inset_factor,
+                #              collision_mesh=al.Mesh(),
+                #              mass=0,
+                #              restitution=0,
+                #              friction=0,
+                #              inertia_tensor=dp.f3(1, 1, 1),
+                #              x=pile.x[1],
+                #              q=dp.f4(0, 0, 0, 1),
+                #              display_mesh=sphere_mesh)
                 pile.replace(1,
-                             sphere_distance,
-                             al.uint3(64, 64, 64),
+                             cylinder_distance,
+                             al.uint3(20, 128, 20),
                              sign=1,
-                             thickness=0,
-                             collision_mesh=al.Mesh(),
+                             thickness=-particle_radius * inset_factor,
+                             collision_mesh=cylinder_mesh,
                              mass=0,
                              restitution=0,
                              friction=0,
-                             inertia_tensor=dp.f3(1, 1, 1),
+                             inertia_tensor=dp.f3(7.91134e-8, 2.94462e-9,
+                                                  7.91134e-8),
                              x=pile.x[1],
                              q=dp.f4(0, 0, 0, 1),
-                             display_mesh=sphere_mesh)
+                             display_mesh=cylinder_mesh)
                 pile.build_grids(4 * kernel_radius)
 
     if sphere_target_reached:

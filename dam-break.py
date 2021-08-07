@@ -20,6 +20,10 @@ cn.set_particle_attr(particle_radius, particle_mass, density0)
 cn.gravity = gravity
 cn.viscosity = 0.001
 
+cn.inertia_inverse = 0.5
+cn.vorticity_coeff = 0.01
+cn.viscosity_omega = 0.1
+
 # rigids
 max_num_contacts = 512
 pile = dp.Pile(dp, max_num_contacts)
@@ -80,8 +84,8 @@ cni.grid_offset = grid_offset
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
-solver = dp.SolverDf(runner, pile, dp, num_particles, grid_res, False, False,
-                     True)
+solver = dp.SolverDf(runner, pile, dp, num_particles, grid_res, enable_surface_tension = True, enable_vorticity=True,
+                     graphical=True)
 particle_normalized_attr = dp.create_graphical((num_particles), 1)
 solver.num_particles = num_particles
 solver.dt = dt

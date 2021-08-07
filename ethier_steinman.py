@@ -35,12 +35,12 @@ def ethier_steinman_ans(es_param, osampling):
     return ans
 
 
-def evaluate_ethier_steinman(viscosity, vorticity_coeff, viscosity_omega, dp,
-                             runner, solver, x_filename, es_param, dt,
-                             solver_box_min, solver_box_max, osampling,
-                             display_proxy, display_solver):
+def evaluate_ethier_steinman(vorticity_coeff, viscosity_omega, dp, runner,
+                             solver, x_filename, es_param, dt, solver_box_min,
+                             solver_box_max, osampling, display_proxy,
+                             display_solver):
     osampling.reset()
-    dp.cn.viscosity = viscosity
+    dp.cn.viscosity = 1.37916076e-05
     dp.cn.vorticity_coeff = vorticity_coeff
     dp.cn.viscosity_omega = viscosity_omega
     dp.copy_cn()
@@ -155,12 +155,12 @@ def optimize(dp, runner, solver, x_filename, es_param, dt, solver_box_min,
              solver_box_max, osampling, display_proxy, display_solver):
     best_loss = np.finfo(np.float64).max
     best_x = None
-    x = np.array([3.61355447e-06, 0.01, 0.1])
-    adam = AdamOptim(x, lr=1e-8)
+    x = np.array([0.01, 0.1])
+    adam = AdamOptim(x, lr=0)
 
     for iteration in range(30):
         current_x = x
-        x, loss, grad = adam.update(evaluate_loss, x, x * 1e-2, dp, runner,
+        x, loss, grad = adam.update(evaluate_loss, x, x * 1e-3, dp, runner,
                                     solver, x_filename, es_param, dt,
                                     solver_box_min, solver_box_max, osampling,
                                     display_proxy, display_solver)
@@ -215,7 +215,7 @@ class OptimSampling:
     def __init__(self, dp, solver_box_min, solver_box_max, ts):
         self.ts = ts
         self.dp = dp
-        self.num_samples_per_dim = 31
+        self.num_samples_per_dim = 15
         self.num_samples = self.num_samples_per_dim * self.num_samples_per_dim * self.num_samples_per_dim
         self.sample_x = dp.create_coated((self.num_samples), 3)
         self.sample_data3 = dp.create_coated((self.num_samples), 3)
@@ -255,7 +255,7 @@ parser = argparse.ArgumentParser(description='Ethier-Steinman problem')
 parser.add_argument('--mode', type=str, default='fill')
 args = parser.parse_args()
 
-dp = al.Depot(np.float64)
+dp = al.Depot(np.float32)
 cn = dp.cn
 cni = dp.cni
 dp.create_display(800, 600, "", False)
@@ -265,7 +265,7 @@ particle_radius = 2**-11
 kernel_radius = particle_radius * 4
 density0 = 1000.0
 cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radius
-volume_relative_to_cube = 0.82
+volume_relative_to_cube = 0.8
 particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 dt = 2e-3
 gravity_scalar = -9.81
@@ -337,7 +337,7 @@ solver = dp.SolverDf(runner,
                      max_num_particles,
                      grid_res,
                      enable_surface_tension=False,
-                     enable_vorticity=True,
+                     enable_vorticity=(args.mode == 'optimize'),
                      graphical=True)
 
 particle_normalized_attr = dp.create_graphical((max_num_particles), 1)
@@ -381,15 +381,15 @@ else:
                                enable_surface_tension=False,
                                enable_vorticity=False,
                                graphical=True)
-    # display_proxy.add_particle_shading_program(solver.particle_x,
-    #                                            particle_normalized_attr,
-    #                                            colormap_tex,
-    #                                            solver.particle_radius, solver)
-    display_proxy.add_particle_shading_program(display_solver.particle_x,
+    display_proxy.add_particle_shading_program(solver.particle_x,
                                                particle_normalized_attr,
                                                colormap_tex,
-                                               display_solver.particle_radius,
-                                               display_solver)
+                                               solver.particle_radius, solver)
+    # display_proxy.add_particle_shading_program(display_solver.particle_x,
+    #                                            particle_normalized_attr,
+    #                                            colormap_tex,
+    #                                            display_solver.particle_radius,
+    #                                            display_solver)
 
 if args.mode == 'fill':
     fill_until_rest(dp, solver, sphere_radius, particle_normalized_attr)
@@ -399,12 +399,15 @@ elif args.mode == 'optimize':
                            -solver_box_half_extent)
     solver_box_max = dp.f3(solver_box_half_extent, solver_box_half_extent,
                            solver_box_half_extent)
-    es_param = EthierSteinmanParam(a=np.pi / 4 / (sphere_radius),
-                                   d=np.pi / 2 / (sphere_radius),
+    es_param = EthierSteinmanParam(a=np.pi / 4 / (sphere_radius * 0.25),
+                                   d=np.pi / 2 / (sphere_radius * 0.25),
                                    kinematic_viscosity=20e-6)
-    dt = particle_radius * 1e-6
+    dt = particle_radius * 1e-5
     osampling = OptimSampling(dp, solver_box_min, solver_box_max,
-                              np.array([dt * 500]))
-    optimize(dp, runner, solver, 'spherical-x.alu', es_param, dt,
-             solver_box_min, solver_box_max, osampling, display_proxy,
-             display_solver)
+                              np.array([dt * 2000]))
+    # optimize(dp, runner, solver, 'spherical-x.alu', es_param, dt,
+    #          solver_box_min, solver_box_max, osampling, display_proxy,
+    #          display_solver)
+    evaluate_ethier_steinman(0.01, 0.01, dp, runner, solver, 'spherical-x.alu',
+                             es_param, dt, solver_box_min, solver_box_max,
+                             osampling, display_proxy, display_solver)
