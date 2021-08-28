@@ -1,319 +1,286 @@
 import os
-import torch as T
+
+import torch
+import random
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 
 
-class OUActionNoise:
-    def __init__(self, mu, sigma=0.15, theta=.2, dt=1e-2, x0=None):
+class OrnsteinUhlenbeckProcess:
+    def __init__(self, size, mu=0.0, sigma=1e-3, theta=0.15, dt=1e-2):
         self.theta = theta
         self.mu = mu
         self.sigma = sigma
         self.dt = dt
-        self.x0 = x0
+        self.size = size
         self.reset()
 
     def __call__(self):
         x = self.x_prev + self.theta * (
             self.mu - self.x_prev) * self.dt + self.sigma * np.sqrt(
-                self.dt) * np.random.normal(size=self.mu.shape)
+                self.dt) * np.random.normal(size=self.size)
         self.x_prev = x
         return x
 
     def reset(self):
-        self.x_prev = self.x0 if self.x0 is not None else np.zeros_like(
-            self.mu)
+        self.x_prev = np.random.normal(self.mu, self.sigma, self.size)
 
 
 class ReplayBuffer:
-    def __init__(self, max_size, input_shape, n_actions, num_ushers):
-        self.mem_size = max_size
-        self.mem_cntr = 0
-        self.state_memory = np.zeros((self.mem_size, num_ushers, *input_shape))
-        self.new_state_memory = np.zeros(
-            (self.mem_size, num_ushers, *input_shape))
-        self.action_memory = np.zeros((self.mem_size, num_ushers, n_actions))
-        self.reward_memory = np.zeros(self.mem_size)
-        self.terminal_memory = np.zeros(self.mem_size, dtype=np.float32)
+    def __init__(self, capacity, obs_dim, act_dim):
+        self.obs0 = np.zeros((capacity, obs_dim), dtype=np.float32)
+        self.act = np.zeros((capacity, act_dim), dtype=np.float32)
+        self.rew = np.zeros(capacity, dtype=np.float32)
+        self.obs1 = np.zeros((capacity, obs_dim), dtype=np.float32)
+        self.term = np.zeros(capacity, dtype=np.float32)
+        self.capacity = capacity
+        self.size = 0
+        self.ptr = 0
 
-    def store_transition(self, state, action, reward, state_, done):
-        index = self.mem_cntr % self.mem_size
-        self.state_memory[index] = state
-        self.new_state_memory[index] = state_
-        self.action_memory[index] = action
-        self.reward_memory[index] = reward
-        self.terminal_memory[index] = 1 - done
-        self.mem_cntr += 1
+    def __len__(self):
+        return self.size
+
+    def store(self, obs0, act, rew, obs1, done):
+        self.obs0[self.ptr] = obs0
+        self.act[self.ptr] = act
+        self.rew[self.ptr] = rew
+        self.obs1[self.ptr] = obs1
+        self.term[self.ptr] = 1 - done
+        self.ptr = (self.ptr + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
 
     def sample_buffer(self, batch_size):
-        max_mem = min(self.mem_cntr, self.mem_size)
-
-        batch = np.random.choice(max_mem, batch_size)
-
-        states = self.state_memory[batch]
-        actions = self.action_memory[batch]
-        rewards = self.reward_memory[batch]
-        states_ = self.new_state_memory[batch]
-        terminal = self.terminal_memory[batch]
-
-        return states, actions, rewards, states_, terminal
+        idxs = random.sample(range(self.size), batch_size)
+        selected_vectors = [
+            self.obs0[idxs], self.act[idxs], self.rew[idxs], self.obs1[idxs],
+            self.term[idxs]
+        ]
+        return [
+            torch.tensor(v, dtype=torch.float).to(torch.device('cuda'))
+            for v in selected_vectors
+        ]
 
 
-class CriticNetwork(nn.Module):
-    def __init__(self,
-                 beta,
-                 input_dims,
-                 fc1_dims,
-                 fc2_dims,
-                 n_actions,
-                 name,
-                 chkpt_dir='tmp/ddpg'):
-        super(CriticNetwork, self).__init__()
-        self.input_dims = input_dims
-        self.fc1_dims = fc1_dims
-        self.fc2_dims = fc2_dims
-        self.n_actions = n_actions
-        self.checkpoint_file = os.path.join(chkpt_dir, name + '_ddpg')
-        self.fc1 = nn.Linear(*self.input_dims, self.fc1_dims)
-        f1 = 1. / np.sqrt(self.fc1.weight.data.size()[0])
-        T.nn.init.uniform_(self.fc1.weight.data, -f1, f1)
-        T.nn.init.uniform_(self.fc1.bias.data, -f1, f1)
-        self.bn1 = nn.LayerNorm(self.fc1_dims)
+class MLPQFunction(nn.Module):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_magnitude):
+        super(MLPQFunction, self).__init__()
 
-        self.fc2 = nn.Linear(self.fc1_dims, self.fc2_dims)
-        f2 = 1. / np.sqrt(self.fc2.weight.data.size()[0])
-        T.nn.init.uniform_(self.fc2.weight.data, -f2, f2)
-        T.nn.init.uniform_(self.fc2.bias.data, -f2, f2)
-        self.bn2 = nn.LayerNorm(self.fc2_dims)
+        obs_net_elements = []
+        obs_net_sizes = [obs_dim] + list(hidden_sizes)[:-1]
+        for i in range(len(obs_net_sizes) - 1):
+            obs_net_elements.append(
+                nn.Linear(obs_net_sizes[i], obs_net_sizes[i + 1]))
+            obs_net_elements.append(nn.LayerNorm(obs_net_sizes[i + 1]))
+            obs_net_elements.append(nn.ReLU())
+        self.obs_net = nn.Sequential(*obs_net_elements)
 
-        self.action_value = nn.Linear(self.n_actions, self.fc2_dims)
-        f3 = 0.003
-        self.q = nn.Linear(self.fc2_dims, 1)
-        T.nn.init.uniform_(self.q.weight.data, -f3, f3)
-        T.nn.init.uniform_(self.q.bias.data, -f3, f3)
+        mix_net_elements = []
+        mix_net_sizes = list(hidden_sizes)[-1 - 1:] + [1]
+        mix_net_sizes[0] += act_dim
+        for i in range(len(mix_net_sizes) - 1):
+            mix_net_elements.append(
+                nn.Linear(mix_net_sizes[i], mix_net_sizes[i + 1]))
+            if (i < len(mix_net_sizes) - 2):
+                mix_net_elements.append(nn.ReLU())
 
-        self.optimizer = optim.Adam(self.parameters(), lr=beta)
-        self.device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
+        self.mix_net = nn.Sequential(*mix_net_elements)
 
-        self.to(self.device)
+        final_layer = [
+            m for m in self.mix_net.modules()
+            if not isinstance(m, nn.Sequential)
+        ][-1]
+        final_layer.weight.data.uniform_(-final_layer_magnitude,
+                                         final_layer_magnitude)
+        final_layer.bias.data.uniform_(-final_layer_magnitude,
+                                       final_layer_magnitude)
 
-    def forward(self, state, action):
-        state_value = self.fc1(state)
-        state_value = self.bn1(state_value)
-        state_value = F.relu(state_value)
-        state_value = self.fc2(state_value)
-        state_value = self.bn2(state_value)
-
-        action_value = F.relu(self.action_value(action))
-        state_action_value = F.relu(T.add(state_value, action_value))
-        state_action_value = self.q(state_action_value)
-
-        return state_action_value
-
-    def save_checkpoint(self):
-        print('... saving checkpoint ...')
-        T.save(self.state_dict(), self.checkpoint_file)
-
-    def load_checkpoint(self):
-        print('... loading checkpoint ...')
-        self.load_state_dict(T.load(self.checkpoint_file))
+    def forward(self, obs, act):
+        obs_net_out = self.obs_net(obs)
+        return self.mix_net(torch.cat([obs_net_out, act], 1))
 
 
-class ActorNetwork(nn.Module):
-    def __init__(self,
-                 alpha,
-                 input_dims,
-                 fc1_dims,
-                 fc2_dims,
-                 n_actions,
-                 name,
-                 chkpt_dir='tmp/ddpg'):
-        super(ActorNetwork, self).__init__()
-        self.input_dims = input_dims
-        self.fc1_dims = fc1_dims
-        self.fc2_dims = fc2_dims
-        self.n_actions = n_actions
-        self.checkpoint_file = os.path.join(chkpt_dir, name + '_ddpg')
-        self.fc1 = nn.Linear(*self.input_dims, self.fc1_dims)
-        f1 = 1. / np.sqrt(self.fc1.weight.data.size()[0])
-        T.nn.init.uniform_(self.fc1.weight.data, -f1, f1)
-        T.nn.init.uniform_(self.fc1.bias.data, -f1, f1)
-        self.bn1 = nn.LayerNorm(self.fc1_dims)
+class MLPActor(nn.Module):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_magnitude):
+        super(MLPActor, self).__init__()
+        self.act_dim = act_dim
+        elements = []
+        layer_sizes = [obs_dim] + list(hidden_sizes) + [act_dim]
+        for i in range(len(layer_sizes) - 1):
+            elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            if i < len(layer_sizes) - 2:
+                elements.append(nn.LayerNorm(layer_sizes[i + 1]))
+                elements.append(nn.ReLU())
+        self.net = nn.Sequential(*elements)
 
-        self.fc2 = nn.Linear(self.fc1_dims, self.fc2_dims)
-        f2 = 1. / np.sqrt(self.fc2.weight.data.size()[0])
-        T.nn.init.uniform_(self.fc2.weight.data, -f2, f2)
-        T.nn.init.uniform_(self.fc2.bias.data, -f2, f2)
-        self.bn2 = nn.LayerNorm(self.fc2_dims)
-
-        f3 = 0.003
-        self.mu = nn.Linear(self.fc2_dims, self.n_actions)
-        T.nn.init.uniform_(self.mu.weight.data, -f3, f3)
-        T.nn.init.uniform_(self.mu.bias.data, -f3, f3)
-
-        self.optimizer = optim.Adam(self.parameters(), lr=alpha)
-        self.device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
-        self.to(self.device)
+        final_layer = [
+            m for m in self.net.modules() if not isinstance(m, nn.Sequential)
+        ][-1]
+        final_layer.weight.data.uniform_(-final_layer_magnitude,
+                                         final_layer_magnitude)
+        final_layer.bias.data.uniform_(-final_layer_magnitude,
+                                       final_layer_magnitude)
 
     def forward(self, state):
-        x = self.fc1(state)
-        x = self.bn1(x)
-        x = F.relu(x)
-        x = self.fc2(x)
-        x = self.bn2(x)
-        x = F.relu(x)
-        x = self.mu(x)
-        x[0] = F.softplus(x[0])  # radius, positive
-        x[1] = F.relu(x[1])  # strength, non-negative
-        return x
-
-    def save_checkpoint(self):
-        print('... saving checkpoint ...')
-        T.save(self.state_dict(), self.checkpoint_file)
-
-    def load_checkpoint(self):
-        print('... loading checkpoint ...')
-        self.load_state_dict(T.load(self.checkpoint_file))
+        num_buoys = self.act_dim // 2
+        x = self.net(state)
+        x_activated = torch.zeros_like(x)
+        if x.dim() == 2:
+            x_activated[:, :num_buoys] = F.softplus(
+                x[:, :num_buoys])  # radius, positive
+            x_activated[:, num_buoys:] = F.relu(
+                x[:, num_buoys:])  # strength, non-negative
+        else:
+            x_activated[:num_buoys] = F.softplus(
+                x[:num_buoys])  # radius, positive
+            x_activated[num_buoys:] = F.relu(
+                x[num_buoys:])  # strength, non-negative
+        return x_activated
 
 
-class Agent:
+class DDPGAgent:
     def __init__(self,
-                 alpha,
-                 beta,
-                 input_dims,
-                 tau,
-                 num_ushers,
+                 actor_lr,
+                 critic_lr,
+                 critic_weight_decay,
+                 obs_dim,
+                 act_dim,
+                 hidden_sizes,
+                 soft_update_rate,
                  gamma=0.99,
-                 n_actions=2,
-                 max_size=1000000,
-                 layer1_size=400,
-                 layer2_size=300,
+                 replay_size=1000000,
+                 final_layer_magnitude=3e-3,
                  batch_size=64):
         self.gamma = gamma
-        self.tau = tau
-        self.memory = ReplayBuffer(max_size, input_dims, n_actions, num_ushers)
+        self.soft_update_rate = soft_update_rate
+        self.replay_size = replay_size
         self.batch_size = batch_size
-        self.num_ushsers = num_ushers
+        self.actor_lr = actor_lr
+        self.critic_lr = critic_lr
+        self.critic_weight_decay = critic_weight_decay
+        self.obs_dim = obs_dim
+        self.act_dim = act_dim
+        self.hidden_sizes = hidden_sizes
+        self.final_layer_magnitude = final_layer_magnitude
+        self.memory = ReplayBuffer(replay_size, obs_dim, act_dim)
 
-        self.actor = ActorNetwork(alpha,
-                                  input_dims,
-                                  layer1_size,
-                                  layer2_size,
-                                  n_actions=n_actions,
-                                  name='Actor')
-        self.critic = CriticNetwork(beta,
-                                    input_dims,
-                                    layer1_size,
-                                    layer2_size,
-                                    n_actions=n_actions,
-                                    name='Critic')
+        self.actor = MLPActor(obs_dim, act_dim, hidden_sizes,
+                              final_layer_magnitude)
+        self.actor.to(torch.device('cuda'))
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)
+        self.critic = MLPQFunction(obs_dim, act_dim, hidden_sizes,
+                                   final_layer_magnitude)
+        self.critic.to(torch.device('cuda'))
+        self.critic_optimizer = optim.Adam(self.critic.parameters(),
+                                           lr=critic_lr,
+                                           weight_decay=critic_weight_decay)
 
-        self.target_actor = ActorNetwork(alpha,
-                                         input_dims,
-                                         layer1_size,
-                                         layer2_size,
-                                         n_actions=n_actions,
-                                         name='TargetActor')
-        self.target_critic = CriticNetwork(beta,
-                                           input_dims,
-                                           layer1_size,
-                                           layer2_size,
-                                           n_actions=n_actions,
-                                           name='TargetCritic')
+        self.target_actor = MLPActor(obs_dim, act_dim, hidden_sizes,
+                                     final_layer_magnitude)
+        self.target_actor.to(torch.device('cuda'))
+        self.target_critic = MLPQFunction(obs_dim, act_dim, hidden_sizes,
+                                          final_layer_magnitude)
+        self.target_critic.to(torch.device('cuda'))
 
-        self.noise = OUActionNoise(mu=np.zeros(n_actions))
+        self.noise = OrnsteinUhlenbeckProcess(act_dim)
 
-        self.update_network_parameters(tau=1)
+        DDPGAgent.hard_update(self.target_actor, self.actor)
+        DDPGAgent.hard_update(self.target_critic, self.critic)
 
-    def choose_action(self, observation):
+    def get_action(self, observation, enable_noise=True):
         self.actor.eval()
-        observation = T.tensor(observation,
-                               dtype=T.float).to(self.actor.device)
-        mu = self.actor.forward(observation).to(self.actor.device)
-        mu_prime = mu + T.tensor(self.noise(), dtype=T.float).to(
-            self.actor.device)
+        observation = torch.tensor(observation,
+                                   dtype=torch.float).to(torch.device('cuda'))
+        mu = self.actor.forward(observation).cpu().detach().numpy()
+        if enable_noise:
+            mu += self.noise()
+            num_buoys = len(mu) // 2
+            mu[:num_buoys] = np.clip(mu[:num_buoys], 1e-9, None)
+            mu[num_buoys:] = np.clip(mu[num_buoys:], 0.0, None)
         self.actor.train()
-        return mu_prime.cpu().detach().numpy()
+        return mu
 
-    def remember(self, state, action, reward, new_state, done):
-        self.memory.store_transition(state, action, reward, new_state, done)
+    def remember(self, obs0, act, rew, obs1, done):
+        self.memory.store(obs0, act, rew, obs1, done)
 
     def learn(self):
-        if self.memory.mem_cntr < self.batch_size:
+        if len(self.memory) < self.batch_size:
             return
-        state, action, reward, new_state, done = self.memory.sample_buffer(
+        state, action, reward, new_state, term = self.memory.sample_buffer(
             self.batch_size)
 
-        reward = T.tensor(reward, dtype=T.float).to(self.critic.device)
-        done = T.tensor(done).to(self.critic.device)
-        new_state = T.tensor(new_state, dtype=T.float).to(self.critic.device)
-        action = T.tensor(action, dtype=T.float).to(self.critic.device)
-        state = T.tensor(state, dtype=T.float).to(self.critic.device)
-
+        # Optimize critic
         self.target_actor.eval()
         self.target_critic.eval()
-        self.critic.eval()
-        target_actions = self.target_actor.forward(new_state)
-        critic_value_ = self.target_critic.forward(new_state, target_actions)
+        with torch.no_grad():
+            target_actions = self.target_actor.forward(new_state)
+            critic_value_ = self.target_critic.forward(new_state,
+                                                       target_actions)
+
+            target = reward.view(self.batch_size, 1) + self.gamma * term.view(
+                self.batch_size, 1) * critic_value_
+
+        self.critic_optimizer.zero_grad()
         critic_value = self.critic.forward(state, action)
-
-        target = []
-        for j in range(self.batch_size):
-            target.append(reward[j] + self.gamma * critic_value_[j] * done[j])
-        target = T.tensor(target).to(self.critic.device)
-        target = target.view(self.batch_size, 1)
-
-        self.critic.train()
-        self.critic.optimizer.zero_grad()
         critic_loss = F.mse_loss(target, critic_value)
         critic_loss.backward()
-        self.critic.optimizer.step()
+        self.critic_optimizer.step()
 
+        # Optimize actor
         self.critic.eval()
-        self.actor.optimizer.zero_grad()
+        for p in self.critic.parameters():
+            p.requires_grad = False
+
+        self.actor_optimizer.zero_grad()
         mu = self.actor.forward(state)
-        self.actor.train()
         actor_loss = -self.critic.forward(state, mu)
-        actor_loss = T.mean(actor_loss)
+        actor_loss = actor_loss.mean()
         actor_loss.backward()
-        self.actor.optimizer.step()
+        self.actor_optimizer.step()
 
-        self.update_network_parameters()
+        self.critic.train()
+        for p in self.critic.parameters():
+            p.requires_grad = True
 
-    def update_network_parameters(self, tau=None):
-        if tau is None:
-            tau = self.tau
-        actor_params = self.actor.named_parameters()
-        critic_params = self.critic.named_parameters()
-        target_actor_params = self.target_actor.named_parameters()
-        target_critic_params = self.target_critic.named_parameters()
+        DDPGAgent.soft_update(self.target_actor, self.actor,
+                              self.soft_update_rate)
+        DDPGAgent.soft_update(self.target_critic, self.critic,
+                              self.soft_update_rate)
 
-        critic_state_dict = dict(critic_params)
-        actor_state_dict = dict(actor_params)
-        target_critic_dict = dict(target_critic_params)
-        target_actor_dict = dict(target_actor_params)
+    @staticmethod
+    def hard_update(dst_net, src_net):
+        src_state_dict = src_net.state_dict()
+        dst_state_dict = dst_net.state_dict()
+        with torch.no_grad():
+            for name, dst_param in dst_state_dict.items():
+                dst_param.copy_(src_state_dict[name])
 
-        for name in critic_state_dict:
-            critic_state_dict[name] = tau * critic_state_dict[name].clone() + (
-                1 - tau) * target_critic_dict[name].clone()
+    @staticmethod
+    def soft_update(dst_net, src_net, tau):
+        src_state_dict = src_net.state_dict()
+        dst_state_dict = dst_net.state_dict()
+        with torch.no_grad():
+            for name, dst_param in dst_state_dict.items():
+                dst_param.mul_(1.0 - tau)
+                dst_param.add_(src_state_dict[name] * tau)
 
-        self.target_critic.load_state_dict(critic_state_dict)
+    def save_models(self, parent_dir):
+        torch.save(self.actor.state_dict(),
+                   os.path.join(parent_dir, 'Actor_ddpg'))
+        torch.save(self.target_actor.state_dict(),
+                   os.path.join(parent_dir, 'TargetActor_ddpg'))
+        torch.save(self.critic.state_dict(),
+                   os.path.join(parent_dir, 'Critic_ddpg'))
+        torch.save(self.target_critic.state_dict(),
+                   os.path.join(parent_dir, 'TargetCritic_ddpg'))
 
-        for name in actor_state_dict:
-            actor_state_dict[name] = tau * actor_state_dict[name].clone() + (
-                1 - tau) * target_actor_dict[name].clone()
-        self.target_actor.load_state_dict(actor_state_dict)
-
-    def save_models(self):
-        self.actor.save_checkpoint()
-        self.target_actor.save_checkpoint()
-        self.critic.save_checkpoint()
-        self.target_critic.save_checkpoint()
-
-    def load_models(self):
-        self.actor.load_checkpoint()
-        self.target_actor.load_checkpoint()
-        self.critic.load_checkpoint()
-        self.target_critic.load_checkpoint()
+    def load_models(self, parent_dir):
+        self.actor.load_state_dict(
+            torch.load(os.path.join(parent_dir, 'Actor_ddpg')))
+        self.target_actor.load_state_dict(
+            torch.load(os.path.join(parent_dir, 'TargetActor_ddpg')))
+        self.critic.load_state_dict(
+            torch.load(os.path.join(parent_dir, 'Critic_ddpg')))
+        self.target_critic.load_state_dict(
+            torch.load(os.path.join(parent_dir, 'TargetCritic_ddpg')))

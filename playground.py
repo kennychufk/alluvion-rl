@@ -1,10 +1,24 @@
+import argparse
+import random
+from collections import deque
+
 import alluvion as al
 import numpy as np
 from pathlib import Path
 from sklearn.metrics import mean_squared_error
-import argparse
-from ddpg_torch import Agent
+import wandb
+import torch
 
+from ddpg_torch import DDPGAgent
+
+parser = argparse.ArgumentParser(description='RL playground')
+parser.add_argument('--seed', type=int, default=2021)
+parser.add_argument('--input', type=str, default='')
+args = parser.parse_args()
+
+np.random.seed(args.seed)
+random.seed(args.seed)
+torch.manual_seed(args.seed)
 
 class FluidField:
     def __init__(self, dp, field_box_min, field_box_max):
@@ -40,28 +54,23 @@ class FluidField:
 
 # marker v, marker q, marker omega, fluid v, fluid density, TODO: distance to boundary, normal to boundary
 def make_obs(marker_v, marker_q, marker_omega, sample_v, sample_density):
-    num_ushers = len(marker_v)
-    obs = np.zeros((num_ushers, 14), dtype=marker_v.dtype)
-    for i in range(num_ushers):
-        obs[i][:3] = marker_v[i]
-        obs[i][3:7] = marker_q[i]
-        obs[i][7:10] = marker_omega[i]
-        obs[i][10:13] = sample_v[i]
-        obs[i][13:14] = sample_density[i]
-    return obs
+    return np.concatenate(
+        (marker_v.flatten(), marker_q.flatten(), marker_omega.flatten(),
+         sample_v.flatten(), sample_density),
+        axis=None,
+        dtype=marker_v.dtype)
 
 
-def make_usher_param(marker_x, marker_v, act_aggregated):
+def make_usher_param(marker_x, marker_v, act_aggregated, kernel_radius):
     drive_x = marker_x  # TODO: can be different
     drive_v = marker_v  # TODO: can be different
-    drive_radius = np.ascontiguousarray(act_aggregated[:, 0])
-    drive_strength = np.ascontiguousarray(act_aggregated[:, 1])
+    num_buoys = len(marker_x)
+    drive_radius = np.ascontiguousarray(act_aggregated[:num_buoys] *
+                                        kernel_radius)
+    drive_strength = np.ascontiguousarray(act_aggregated[num_buoys:])
     return drive_x, drive_v, drive_radius, drive_strength
 
 
-parser = argparse.ArgumentParser(description='RL playground')
-parser.add_argument('--input', type=str, default='')
-args = parser.parse_args()
 dp = al.Depot(np.float32)
 cn = dp.cn
 cni = dp.cni
@@ -181,19 +190,15 @@ remaining_force_time = 0.0
 # frame_directory = 'rl-truth-6a31d4'
 # Path(frame_directory).mkdir(parents=True, exist_ok=True)
 
-agent = Agent(
-    alpha=0.000025,
-    beta=0.00025,
-    input_dims=[
-        14
-    ],  # marker v, marker q, marker omega, fluid v, fluid density, TODO: distance to boundary, normal to boundary
-    tau=0.001,
-    num_ushers=num_buoys,
-    batch_size=64,
-    layer1_size=400,
-    layer2_size=300,
-    # TODO: arbitrary no. of layers
-    n_actions=2)
+agent = DDPGAgent(actor_lr=2e-5,
+                  critic_lr=2e-4,
+                  critic_weight_decay=1e-2,
+                  obs_dim=14 * num_buoys,
+                  act_dim=2 * num_buoys,
+                  hidden_sizes=[2048, 1800],
+                  soft_update_rate=0.001,
+                  batch_size=64,
+                  final_layer_magnitude=1e-4)
 field_box_min = dp.f3(container_width * -0.5, 0, container_width * -0.5)
 field_box_max = dp.f3(container_width * 0.5, container_width,
                       container_width * 0.5)
@@ -204,88 +209,109 @@ frame_interval = 1.0 / fps
 next_frame_id = 0
 ground_truth_pile = dp.Pile(dp, 0)
 
+wandb.init(project='alluvion-rl')
+config = wandb.config
+config.actor_lr = agent.actor_lr
+config.critic_lr = agent.critic_lr
+config.critic_weight_decay = agent.critic_weight_decay
+config.obs_dim = agent.obs_dim
+config.act_dim = agent.act_dim
+config.hidden_sizes = agent.hidden_sizes
+config.soft_update_rate = agent.soft_update_rate
+config.gamma = agent.gamma
+config.replay_size = agent.replay_size
+config.final_layer_magnitude = agent.final_layer_magnitude
+config.seed = args.seed
+
+wandb.watch(agent.critic)
+
 with open('switch', 'w') as f:
     f.write('1')
 
-dp.map_graphical_pointers()
-solver.reset_solving_var()
-solver.particle_x.read_file(f'{args.input}-x.alu')
-solver.particle_v.read_file(f'{args.input}-v.alu')
-solver.update_particle_neighbors()
-dp.unmap_graphical_pointers()
-ground_truth_dir = './rl-truth-6a31d4'
-gtx, gtv, gtq, gtomega = dp.read_pile(f'{ground_truth_dir}/0.pile',
-                                      num_buoys + 2)
-solver.usher.set_sample_x(gtx[1:1 + num_buoys])
-solver.sample_usher()
-obs = make_obs(gtv[1:1 + num_buoys], gtq[1:1 + num_buoys],
-               gtomega[1:1 + num_buoys],
-               dp.coat(solver.usher.sample_v).get(),
-               dp.coat(solver.usher.sample_density).get())
-# clear usher
-drive_x = gtx[1:1 + num_buoys]
-drive_v = np.repeat(0, num_buoys * 3).astype(dp.default_dtype)
-drive_radius = np.repeat(kernel_radius, num_buoys).astype(dp.default_dtype)
-drive_strength = np.repeat(0, num_buoys).astype(dp.default_dtype)
-act_aggregated = np.zeros((num_buoys, 2), dp.default_dtype)
-solver.usher.set(drive_x, drive_v, drive_radius, drive_strength)
-score = 0
-with open(f'{ground_truth_dir}/range.txt', 'r') as f:
-    num_frames = int(f.readline())
-    print('num_frames = ', num_frames)
-for frame_id in range(num_frames - 1):
-    target_t = frame_id / fps
-    gtx, gtv, gtq, gtomega = dp.read_pile(
-        f'{ground_truth_dir}/{frame_id}.pile', num_buoys + 2)
-    solver.usher.set_sample_x(gtx[1:1 + num_buoys])
-    for usher_id in range(num_buoys):
-        act_aggregated[usher_id] = agent.choose_action(obs[usher_id])
-    solver.usher.set(
-        *make_usher_param(gtx[1:1 +
-                              num_buoys], gtv[1:1 +
-                                              num_buoys], act_aggregated))
-    dp.map_graphical_pointers()
+ground_truth_dir_list = ['./rl-truth-e6a7da','./rl-truth-6a31d4', './rl-truth-f2caa5', './rl-truth-ed39a2']
+score_history = deque(maxlen=100)
+episode_id = 0
+while True:
     with open('switch', 'r') as f:
         if f.read(1) == '0':
-            solver.particle_x.write_file('rest-block-play-x.alu',
-                                         solver.num_particles)
-            solver.particle_v.write_file('rest-block-play-v.alu',
-                                         solver.num_particles)
             break
-    while (solver.t < target_t):
-        solver.step()
-        # TODO: do sub-frame choose_action
-    print(frame_id)
-    gtx, gtv, gtq, gtomega = dp.read_pile(
-        f'{ground_truth_dir}/{frame_id+1}.pile', num_buoys + 2)
-    new_obs = make_obs(gtv[1:1 + num_buoys], gtq[1:1 + num_buoys],
-                       gtomega[1:1 + num_buoys],
-                       dp.coat(solver.usher.sample_v).get(),
-                       dp.coat(solver.usher.sample_density).get())
-
-    # find reward
+    dir_id = random.randrange(len(ground_truth_dir_list))
+    ground_truth_dir = ground_truth_dir_list[dir_id]
+    dp.map_graphical_pointers()
+    solver.reset_solving_var()
+    solver.t = 0
+    solver.particle_x.read_file(f'{args.input}-x.alu')
+    solver.particle_v.read_file(f'{args.input}-v.alu')
     solver.update_particle_neighbors()
-    runner.launch_make_neighbor_list(field.sample_x, solver.pid,
-                                     solver.pid_length, field.sample_neighbors,
-                                     field.sample_num_neighbors,
-                                     field.num_samples)
-    runner.launch_sample_fluid(field.sample_x, solver.particle_x,
-                               solver.particle_density, solver.particle_v,
-                               field.sample_neighbors,
-                               field.sample_num_neighbors, field.sample_data3,
-                               field.num_samples)
-    # TODO: accelerate using CUDA kernel
-    simulated_v = field.sample_data3.get()
-    field.sample_data3.read_file(f'{ground_truth_dir}/vfield-{frame_id+1}.alu')
-    ground_truth_v = field.sample_data3.get()
-    reward = -mean_squared_error(simulated_v, ground_truth_v)
-
-    agent.remember(obs, act_aggregated, reward, new_obs,
-                   int(frame_id == (num_frames - 2)))
-    agent.learn()
-    score += reward
-    obs = new_obs
-
-    solver.normalize(solver.particle_v, particle_normalized_attr, 0, 2)
     dp.unmap_graphical_pointers()
-    display_proxy.draw()
+    gtx, gtv, gtq, gtomega = dp.read_pile(f'{ground_truth_dir}/0.pile',
+                                          num_buoys + 2)
+    solver.usher.set_sample_x(gtx[1:1 + num_buoys])
+    solver.sample_usher()
+    obs = make_obs(gtv[1:1 + num_buoys], gtq[1:1 + num_buoys],
+                   gtomega[1:1 + num_buoys],
+                   dp.coat(solver.usher.sample_v).get(),
+                   dp.coat(solver.usher.sample_density).get())
+    # clear usher
+    drive_x = gtx[1:1 + num_buoys]
+    drive_v = np.repeat(0, num_buoys * 3).astype(dp.default_dtype)
+    drive_radius = np.repeat(kernel_radius, num_buoys).astype(dp.default_dtype)
+    drive_strength = np.repeat(0, num_buoys).astype(dp.default_dtype)
+    solver.usher.set(drive_x, drive_v, drive_radius, drive_strength)
+    score = 0
+    with open(f'{ground_truth_dir}/range.txt', 'r') as f:
+        num_frames = int(f.readline())
+        print('num_frames = ', num_frames)
+    for frame_id in range(num_frames - 1):
+        target_t = frame_id / fps
+        gtx, gtv, gtq, gtomega = dp.read_pile(
+            f'{ground_truth_dir}/{frame_id}.pile', num_buoys + 2)
+        solver.usher.set_sample_x(gtx[1:1 + num_buoys])
+        act_aggregated = agent.get_action(obs)
+        solver.usher.set(*make_usher_param(gtx[1:1 + num_buoys], gtv[1:1 +
+                                                                     num_buoys],
+                                           act_aggregated, kernel_radius))
+        dp.map_graphical_pointers()
+        while (solver.t < target_t):
+            solver.step()
+            # TODO: do sub-frame choose_action
+        print(frame_id)
+        gtx, gtv, gtq, gtomega = dp.read_pile(
+            f'{ground_truth_dir}/{frame_id+1}.pile', num_buoys + 2)
+        new_obs = make_obs(gtv[1:1 + num_buoys], gtq[1:1 + num_buoys],
+                           gtomega[1:1 + num_buoys],
+                           dp.coat(solver.usher.sample_v).get(),
+                           dp.coat(solver.usher.sample_density).get())
+
+        # find reward
+        solver.update_particle_neighbors()
+        runner.launch_make_neighbor_list(field.sample_x, solver.pid,
+                                         solver.pid_length, field.sample_neighbors,
+                                         field.sample_num_neighbors,
+                                         field.num_samples)
+        runner.launch_sample_fluid(field.sample_x, solver.particle_x,
+                                   solver.particle_density, solver.particle_v,
+                                   field.sample_neighbors,
+                                   field.sample_num_neighbors, field.sample_data3,
+                                   field.num_samples)
+        # TODO: accelerate using CUDA kernel
+        simulated_v = field.sample_data3.get()
+        field.sample_data3.read_file(f'{ground_truth_dir}/vfield-{frame_id+1}.alu')
+        ground_truth_v = field.sample_data3.get()
+        reward = -mean_squared_error(simulated_v, ground_truth_v)
+
+        agent.remember(obs, act_aggregated, reward, new_obs,
+                       int(frame_id == (num_frames - 2)))
+        agent.learn()
+        score += reward
+        obs = new_obs
+
+        solver.normalize(solver.particle_v, particle_normalized_attr, 0, 2)
+        dp.unmap_graphical_pointers()
+        display_proxy.draw()
+    score_history.append(score)
+
+    if episode_id % 50 == 0:
+        agent.save_models(wandb.run.dir)
+    wandb.log({'score': score, 'score100': np.mean(list(score_history))})
+    episode_id += 1

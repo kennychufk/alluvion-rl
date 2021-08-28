@@ -31,7 +31,7 @@ cn.boundary_viscosity = 4.96210578e-07
 
 # rigids
 max_num_contacts = 512
-pile = dp.Pile(dp, max_num_contacts)
+pile = dp.Pile(dp, runner, max_num_contacts)
 
 container_width = 0.24
 container_dim = dp.f3(container_width, container_width, container_width)
