@@ -8,6 +8,8 @@ import glob
 import argparse
 from optim import AdamOptim
 
+import matplotlib
+matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from matplotlib import patheffects as path_effects
 
@@ -114,6 +116,8 @@ def evaluate_hagen_poiseuille(dp, solver, initial_x, osampling, param, acc,
     cn.gravity = dp.f3(0, acc, 0)
     cn.viscosity = param[0]
     cn.boundary_viscosity = param[1]
+    cn.vorticity_coeff = param[2]
+    cn.viscosity_omega = param[3]
     cn.inertia_inverse = 0.5  # recommended by author
     dp.copy_cn()
     dp.map_graphical_pointers()
@@ -196,15 +200,14 @@ def optimize(dp, solver, initial_x, pipe_radius, lambda_factors, density0,
 
     best_loss = np.finfo(np.float64).max
     best_x = None
-    x = np.array([0.0005, 0.005])
-    adam = AdamOptim(x, lr=1e-3)
+    x = np.array([8.33481991721471e-8, 5.08257662597844e-7, 1e-8, 1e-8])
+    adam = AdamOptim(x, lr=1e-8)
     ground_truth = compute_ground_truth(osampling, pipe_radius, ts, density0,
                                         accelerations, dynamic_viscosity)
 
     with open('switch', 'w') as f:
         f.write('1')
-    iteration = 0
-    while (True):
+    for iteration in range(4000):
         with open('switch', 'r') as f:
             if f.read(1) == '0':
                 break
@@ -224,11 +227,10 @@ def optimize(dp, solver, initial_x, pipe_radius, lambda_factors, density0,
                     accelerations)
         param_names = ['vis', 'bvis', 'ω_coeff', 'vis_ω']
         log_object = {'loss': loss, '|∇|': LA.norm(grad)}
-        for param_id, param_value in enumerate(x):
-            log_object[param_names[param_id]] = x[param_id]
+        for param_id, param_value in enumerate(current_x):
+            log_object[param_names[param_id]] = param_value
             log_object['∇' + param_names[param_id]] = grad[param_id]
         wandb.log(log_object)
-        iteration += 1
 
 
 dp = al.Depot(np.float32)
@@ -240,11 +242,12 @@ display_proxy = dp.get_display_proxy() if args.display else None
 runner = dp.Runner()
 
 # Physical constants
-density0 = 1
-dynamic_viscosity = 0.02
+density0 = 1000
+dynamic_viscosity = 0.001
 
 # Model parameters
-particle_radius = 0.25
+scale_factor = 2**-7
+particle_radius = 0.25 * scale_factor
 kernel_radius = particle_radius * 4
 cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radius
 volume_relative_to_cube = 0.8
@@ -255,9 +258,9 @@ cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 
 # Pipe dimension
-pipe_radius_grid_span = 10
+pipe_radius_grid_span = 13
 initial_radius = kernel_radius * pipe_radius_grid_span
-pipe_container_radius = 7.69324
+pipe_model_radius = 1.01034998e+01 * scale_factor
 pipe_length_grid_half_span = 3
 pipe_length_half = pipe_length_grid_half_span * kernel_radius
 pipe_length = 2 * pipe_length_grid_half_span * kernel_radius
@@ -270,12 +273,12 @@ print('pipe_radius', pipe_radius)
 
 # Pressurization and temporal parameters
 lambda_factors = np.array([0.5, 1.125, 1.5])
-accelerations = np.array([(2**-11) / 100])
+accelerations = np.array([2**-25])
 
 # rigids
 max_num_contacts = 512
 pile = dp.Pile(dp, runner, max_num_contacts)
-pile.add(dp.InfiniteCylinderDistance.create(pipe_container_radius),
+pile.add(dp.InfiniteCylinderDistance.create(pipe_model_radius),
          al.uint3(64, 1, 64),
          sign=-1)
 
@@ -301,7 +304,7 @@ solver = dp.SolverDf(runner,
                      num_particles,
                      grid_res,
                      enable_surface_tension=False,
-                     enable_vorticity=False,
+                     enable_vorticity=True,
                      graphical=args.display)
 solver.particle_radius = particle_radius
 
@@ -327,6 +330,7 @@ dp.copy_cn()
 
 initial_x = dp.create((num_particles), 3)
 initial_x.read_file(args.pos[0])
+initial_x.scale(dp.f3(scale_factor, scale_factor, scale_factor))
 
 wandb.init(project='alluvion')
 config = wandb.config
@@ -335,6 +339,12 @@ config.density0 = density0
 config.pipe_radius = pipe_radius
 config.accelerations = accelerations
 config.num_particles = num_particles
+config.half_life = approximate_half_life(dynamic_viscosity, density0,
+                                         pipe_radius)
+config.kernel_radius = kernel_radius
+config.pipe_model_radius = pipe_model_radius
+config.precision = str(dp.default_dtype)
+config.Re = pipe_radius * pipe_radius * pipe_radius * density0 * density0 * 0.25 / dynamic_viscosity / dynamic_viscosity * accelerations
 
 optimize(dp, solver, initial_x, pipe_radius, lambda_factors, density0,
          accelerations, dynamic_viscosity)
