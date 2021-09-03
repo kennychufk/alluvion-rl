@@ -48,13 +48,14 @@ def developing_hagen_poiseuille(r, t, dynamic_viscosity, density0, a,
 class OptimSampling:
     def __init__(self, dp, cn, pipe_length, pipe_radius, ts):
         self.ts = ts
-        self.num_sample_planes = 14
-        self.num_samples_per_plane = 31  # should be odd number to get central velocity
-        self.num_samples = self.num_samples_per_plane * self.num_sample_planes
+        self.num_sections = 14
+        self.num_rotations = 16
+        self.num_rs = 31  # should be odd number to get central velocity
+        self.num_samples = self.num_rs * self.num_sections * self.num_rotations
 
-        num_samples_per_side = self.num_samples_per_plane // 2
-        self.rs = pipe_radius * 2 / (self.num_samples_per_plane + 1) * (
-            np.arange(self.num_samples_per_plane) - num_samples_per_side)
+        # r contains 0 but not pipe_radius
+        self.rs = pipe_radius * 2 / (self.num_rs + 1) * (
+            np.arange(self.num_rs) - self.num_rs // 2)
 
         self.sample_x = dp.create_coated((self.num_samples), 3)
         self.sample_data3 = dp.create_coated((self.num_samples), 3)
@@ -63,13 +64,19 @@ class OptimSampling:
         self.sample_num_neighbors = dp.create_coated((self.num_samples), 1,
                                                      np.uint32)
         self.sample_x_host = np.zeros((self.num_samples, 3), dp.default_dtype)
-        distance_between_sample_planes = pipe_length / self.num_sample_planes
+        section_length = pipe_length / self.num_sections
+        offset_y_per_rotation = section_length / self.num_rotations
+        theta_per_rotation = np.pi * 2 / self.num_rotations
         for i in range(self.num_samples):
-            plane_id = i // self.num_samples_per_plane
-            id_in_plane = i % self.num_samples_per_plane
+            section_id = i // (self.num_rs * self.num_rotations)
+            rotation_id = (i // self.num_rs) % (self.num_rotations)
+            r_id = i % self.num_rs
+            theta = theta_per_rotation * rotation_id
             self.sample_x_host[i] = np.array([
-                self.rs[id_in_plane], pipe_length * -0.5 +
-                distance_between_sample_planes * plane_id, 0
+                self.rs[r_id] * np.cos(theta),
+                pipe_length * -0.5 + section_length * section_id +
+                offset_y_per_rotation * rotation_id,
+                self.rs[r_id] * np.sin(theta)
             ], dp.default_dtype)
         self.sample_x.set(self.sample_x_host)
         self.dp = dp
@@ -77,8 +84,7 @@ class OptimSampling:
 
     def reset(self):
         self.sampling_cursor = 0
-        self.vx = np.zeros((len(self.ts), self.num_samples_per_plane),
-                           self.dp.default_dtype)
+        self.vx = np.zeros((len(self.ts), self.num_rs), self.dp.default_dtype)
 
 
 def pressurize(dp, solver, osampling):
@@ -96,7 +102,7 @@ def pressurize(dp, solver, osampling):
                                    osampling.sample_data3,
                                    osampling.num_samples)
         sample_vx = osampling.sample_data3.get().reshape(
-            -1, osampling.num_samples_per_plane, 3)[:, :, 1]
+            -1, osampling.num_rs, 3)[:, :, 1]
         osampling.vx[osampling.sampling_cursor] = np.mean(sample_vx, axis=0)
         osampling.sampling_cursor += 1
     solver.step_wrap1()
@@ -133,8 +139,7 @@ def evaluate_hagen_poiseuille(dp, solver, initial_x, osampling, param, acc,
 # across a variety of speed. Fixed radius. Fixed target dynamic viscosity. Look at one instant
 def compute_ground_truth(osampling, pipe_radius, ts, density0, accelerations,
                          dynamic_viscosity):
-    ground_truth = np.zeros(
-        (len(accelerations), len(ts), osampling.num_samples_per_plane))
+    ground_truth = np.zeros((len(accelerations), len(ts), osampling.num_rs))
     for acc_id, acc in enumerate(accelerations):
         for t_id, t in enumerate(ts):
             ground_truth[acc_id, t_id] = developing_hagen_poiseuille(
@@ -145,8 +150,7 @@ def compute_ground_truth(osampling, pipe_radius, ts, density0, accelerations,
 
 def simulate(param, dp, solver, osampling, initial_x, pipe_radius, ts,
              density0, accelerations, dynamic_viscosity):
-    simulated = np.zeros(
-        (len(accelerations), len(ts), osampling.num_samples_per_plane))
+    simulated = np.zeros((len(accelerations), len(ts), osampling.num_rs))
     for acc_id, acc in enumerate(accelerations):
         result = evaluate_hagen_poiseuille(dp, solver, initial_x, osampling,
                                            param, acc, ts)
@@ -193,7 +197,7 @@ def optimize(dp, solver, initial_x, pipe_radius, lambda_factors, density0,
     best_loss = np.finfo(np.float64).max
     best_x = None
     x = np.array([0.0005, 0.005])
-    adam = AdamOptim(x, lr=2e-5)
+    adam = AdamOptim(x, lr=1e-3)
     ground_truth = compute_ground_truth(osampling, pipe_radius, ts, density0,
                                         accelerations, dynamic_viscosity)
 
