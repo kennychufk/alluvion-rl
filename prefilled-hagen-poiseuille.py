@@ -116,8 +116,8 @@ def evaluate_hagen_poiseuille(dp, solver, initial_x, osampling, param, acc,
     cn.gravity = dp.f3(0, acc, 0)
     cn.viscosity = param[0]
     cn.boundary_viscosity = param[1]
-    cn.vorticity_coeff = param[2]
-    cn.viscosity_omega = param[3]
+    # cn.vorticity_coeff = param[2]
+    # cn.viscosity_omega = param[3]
     cn.inertia_inverse = 0.5  # recommended by author
     dp.copy_cn()
     dp.map_graphical_pointers()
@@ -126,7 +126,7 @@ def evaluate_hagen_poiseuille(dp, solver, initial_x, osampling, param, acc,
     solver.reset_solving_var()
     solver.num_particles = initial_x.get_shape()[0]
     solver.dt = 1e-2
-    solver.max_dt = 1e-1
+    solver.max_dt = 1.0
     solver.min_dt = 0
     solver.cfl = 0.2
     solver.t = 0
@@ -200,14 +200,14 @@ def optimize(dp, solver, initial_x, pipe_radius, lambda_factors, density0,
 
     best_loss = np.finfo(np.float64).max
     best_x = None
-    x = np.array([8.33481991721471e-8, 5.08257662597844e-7, 1e-8, 1e-8])
-    adam = AdamOptim(x, lr=1e-8)
+    x = np.array([0.0015, 0.006])
+    adam = AdamOptim(x, lr=1e-4)
     ground_truth = compute_ground_truth(osampling, pipe_radius, ts, density0,
                                         accelerations, dynamic_viscosity)
 
     with open('switch', 'w') as f:
         f.write('1')
-    for iteration in range(4000):
+    for iteration in range(200):
         with open('switch', 'r') as f:
             if f.read(1) == '0':
                 break
@@ -242,11 +242,11 @@ display_proxy = dp.get_display_proxy() if args.display else None
 runner = dp.Runner()
 
 # Physical constants
-density0 = 1000
-dynamic_viscosity = 0.001
+density0 = 1
+dynamic_viscosity = 0.01
 
 # Model parameters
-scale_factor = 2**-7
+scale_factor = 1
 particle_radius = 0.25 * scale_factor
 kernel_radius = particle_radius * 4
 cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radius
@@ -258,9 +258,9 @@ cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 
 # Pipe dimension
-pipe_radius_grid_span = 13
+pipe_radius_grid_span = 10
 initial_radius = kernel_radius * pipe_radius_grid_span
-pipe_model_radius = 1.01034998e+01 * scale_factor
+pipe_model_radius = 7.69324 * scale_factor  # for 9900 particles. Larger than the experimental value (7.69211562500019)
 pipe_length_grid_half_span = 3
 pipe_length_half = pipe_length_grid_half_span * kernel_radius
 pipe_length = 2 * pipe_length_grid_half_span * kernel_radius
@@ -273,7 +273,7 @@ print('pipe_radius', pipe_radius)
 
 # Pressurization and temporal parameters
 lambda_factors = np.array([0.5, 1.125, 1.5])
-accelerations = np.array([2**-25])
+accelerations = np.array([2**-13 / 100])
 
 # rigids
 max_num_contacts = 512
@@ -304,7 +304,7 @@ solver = dp.SolverDf(runner,
                      num_particles,
                      grid_res,
                      enable_surface_tension=False,
-                     enable_vorticity=True,
+                     enable_vorticity=False,
                      graphical=args.display)
 solver.particle_radius = particle_radius
 
