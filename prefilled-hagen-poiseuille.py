@@ -1,11 +1,14 @@
+import glob
+import argparse
+import subprocess
+import os
+
 import alluvion as al
 import numpy as np
 from numpy import linalg as LA
 from pathlib import Path
 import scipy.special as sc
 from sklearn.metrics import mean_squared_error
-import glob
-import argparse
 from optim import AdamOptim
 
 import matplotlib
@@ -87,6 +90,24 @@ class OptimSampling:
         self.sampling_cursor = 0
         self.vx = np.zeros((len(self.ts), self.num_rs), self.dp.default_dtype)
 
+    def aggregate(self):
+        sample_vx = self.sample_data3.get().reshape(-1, self.num_rs, 3)[..., 1]
+        self.vx[self.sampling_cursor] = np.mean(sample_vx, axis=0)
+        self.sampling_cursor += 1
+
+
+class TemporalStat:
+    def __init__(self):
+        self.ts = []
+        self.temporal_dict = {}
+
+    def append(self, t, **kwargs):
+        self.ts.append(t)
+        for key in kwargs:
+            if key not in self.temporal_dict:
+                self.temporal_dict[key] = []
+            self.temporal_dict[key].append(kwargs[key])
+
 
 def pressurize(dp, solver, osampling):
     if solver.t >= osampling.ts[osampling.sampling_cursor]:
@@ -102,16 +123,14 @@ def pressurize(dp, solver, osampling):
                                    osampling.sample_num_neighbors,
                                    osampling.sample_data3,
                                    osampling.num_samples)
-        sample_vx = osampling.sample_data3.get().reshape(
-            -1, osampling.num_rs, 3)[:, :, 1]
-        osampling.vx[osampling.sampling_cursor] = np.mean(sample_vx, axis=0)
-        osampling.sampling_cursor += 1
+        osampling.aggregate()
     solver.step_wrap1()
 
 
-def evaluate_hagen_poiseuille(dp, solver, initial_x, osampling, param, acc,
-                              ts):
+def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
+                              is_grad_eval, acc, ts):
     osampling.reset()
+    tstat = TemporalStat()
     cn.gravity = dp.f3(0, acc, 0)
     cn.viscosity = param[0]
     cn.boundary_viscosity = param[1]
@@ -120,23 +139,33 @@ def evaluate_hagen_poiseuille(dp, solver, initial_x, osampling, param, acc,
     cn.inertia_inverse = 0.5  # recommended by author
     dp.copy_cn()
     dp.map_graphical_pointers()
-    solver.particle_x.set_from(initial_x)
+    solver.particle_x.set_from(initial_particle_x)
     solver.particle_v.set_zero()
     solver.reset_solving_var()
-    solver.num_particles = initial_x.get_shape()[0]
-    solver.dt = 1e-2
-    solver.max_dt = 1.0
-    solver.min_dt = 0
-    solver.cfl = 0.2
-    solver.t = 0
+    solver.reset_t()
+    solver.num_particles = initial_particle_x.get_shape()[0]
     step_id = 0
     while osampling.sampling_cursor < len(ts):
         pressurize(dp, solver, osampling)
+        if not is_grad_eval:
+            density_min = dp.Runner.min(solver.particle_density,
+                                        solver.num_particles)
+            density_max = dp.Runner.max(solver.particle_density,
+                                        solver.num_particles)
+            density_mean = dp.Runner.sum(
+                solver.particle_density,
+                solver.num_particles) / solver.num_particles
+            tstat.append(solver.t,
+                         cfl_dt=solver.cfl_dt,
+                         dt=solver.dt,
+                         density_min=density_min,
+                         density_max=density_max,
+                         density_mean=density_mean)
         step_id += 1
         if (dp.has_display() and step_id % 20 == 0):
             dp.get_display_proxy().draw()
     dp.unmap_graphical_pointers()
-    return osampling.vx
+    return osampling.vx, tstat
 
 
 # across a variety of speed. Fixed radius. Fixed target dynamic viscosity. Look at one instant
@@ -151,14 +180,18 @@ def compute_ground_truth(osampling, pipe_radius, ts, density0, accelerations,
     return ground_truth
 
 
-def simulate(param, dp, solver, osampling, initial_x, pipe_radius, ts,
-             density0, accelerations, dynamic_viscosity):
+def simulate(param, is_grad_eval, dp, solver, osampling, initial_particle_x,
+             pipe_radius, ts, density0, accelerations, dynamic_viscosity):
     simulated = np.zeros((len(accelerations), len(ts), osampling.num_rs))
+    summary = []
     for acc_id, acc in enumerate(accelerations):
-        result = evaluate_hagen_poiseuille(dp, solver, initial_x, osampling,
-                                           param, acc, ts)
+        result, tstat = evaluate_hagen_poiseuille(dp, solver,
+                                                  initial_particle_x,
+                                                  osampling, param,
+                                                  is_grad_eval, acc, ts)
         simulated[acc_id] = result
-    return simulated
+        summary.append(tstat)
+    return simulated, summary
 
 
 def mse_loss(ground_truth, simulated):
@@ -189,8 +222,26 @@ def save_result(iteration, ground_truth, simulated, osampling, accelerations):
     plt.close('all')
 
 
-def optimize(dp, solver, initial_x, pipe_radius, lambda_factors, density0,
-             accelerations, dynamic_viscosity):
+def plot_summary(iteration, summary):
+    my_dpi = 128
+    num_rows = 1
+    num_cols = len(accelerations)
+    fig = plt.figure(figsize=(1024 / my_dpi, 768 / my_dpi), dpi=my_dpi)
+    cmap = plt.get_cmap("tab10")
+    for acc_id, acc in enumerate(accelerations):
+        ax = fig.add_subplot(num_rows, num_cols, acc_id + 1)
+        tstat = summary[acc_id]
+        keys = ['density_min', 'density_max', 'density_mean']
+        for key in keys:
+            ax.plot(tstat.ts, tstat.temporal_dict[key], label=key)
+        ax.set_xlabel('t (s)')
+        ax.legend()
+    plt.savefig(f'.alcache/density{iteration}.png')
+    plt.close('all')
+
+
+def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
+             lambda_factors, density0, accelerations, dynamic_viscosity):
     approx_half_life = approximate_half_life(dynamic_viscosity, density0,
                                              pipe_radius)
     print('approx_half_life', approx_half_life)
@@ -199,8 +250,7 @@ def optimize(dp, solver, initial_x, pipe_radius, lambda_factors, density0,
 
     best_loss = np.finfo(np.float64).max
     best_x = None
-    x = np.array([0.0015, 0.006])
-    adam = AdamOptim(x, lr=1e-4)
+    x = param0
     ground_truth = compute_ground_truth(osampling, pipe_radius, ts, density0,
                                         accelerations, dynamic_viscosity)
 
@@ -211,12 +261,10 @@ def optimize(dp, solver, initial_x, pipe_radius, lambda_factors, density0,
             if f.read(1) == '0':
                 break
         current_x = x
-        x, loss, grad, simulated = adam.update(simulate, ground_truth,
-                                               mse_loss, x, x * 1e-2, dp,
-                                               solver, osampling, initial_x,
-                                               pipe_radius, ts, density0,
-                                               accelerations,
-                                               dynamic_viscosity)
+        x, loss, grad, simulated, summary = adam.update(
+            simulate, ground_truth, mse_loss, x, x * 1e-2, dp, solver,
+            osampling, initial_particle_x, pipe_radius, ts, density0,
+            accelerations, dynamic_viscosity)
         if (loss < best_loss):
             best_loss = loss
             wandb.summary['best_loss'] = best_loss
@@ -224,12 +272,28 @@ def optimize(dp, solver, initial_x, pipe_radius, lambda_factors, density0,
             wandb.summary['best_x'] = best_x
         save_result(iteration, ground_truth, simulated, osampling,
                     accelerations)
+        plot_summary(iteration, summary)
         param_names = ['vis', 'bvis', 'ω_coeff', 'vis_ω']
         log_object = {'loss': loss, '|∇|': LA.norm(grad)}
         for param_id, param_value in enumerate(current_x):
             log_object[param_names[param_id]] = param_value
             log_object['∇' + param_names[param_id]] = grad[param_id]
         wandb.log(log_object)
+    ## finalize
+    p = subprocess.Popen([
+        "ffmpeg", "-i", ".alcache/%d.png", "-r", "30.00", "-c:v", "libx264",
+        "-crf", "21", "-pix_fmt", "yuv420p",
+        os.path.join(wandb.run.dir, "profile.mp4")
+    ],
+                         env=os.environ.copy())
+    p.wait()
+    p = subprocess.Popen([
+        "ffmpeg", "-i", ".alcache/density%d.png", "-r", "30.00", "-c:v",
+        "libx264", "-crf", "21", "-pix_fmt", "yuv420p",
+        os.path.join(wandb.run.dir, "density_stat.mp4")
+    ],
+                         env=os.environ.copy())
+    p.wait()
 
 
 dp = al.Depot(np.float32)
@@ -306,6 +370,10 @@ solver = dp.SolverDf(runner,
                      enable_vorticity=False,
                      graphical=args.display)
 solver.particle_radius = particle_radius
+solver.initial_dt = 1e-2
+solver.max_dt = 1.0
+solver.min_dt = 0
+solver.cfl = 0.2
 
 dp.copy_cn()
 
@@ -327,9 +395,11 @@ if args.display:
 
 dp.copy_cn()
 
-initial_x = dp.create((num_particles), 3)
-initial_x.read_file(args.pos[0])
-initial_x.scale(dp.f3(scale_factor, scale_factor, scale_factor))
+initial_particle_x = dp.create((num_particles), 3)
+initial_particle_x.read_file(args.pos[0])
+initial_particle_x.scale(dp.f3(scale_factor, scale_factor, scale_factor))
+param0 = np.array([0.0015, 0.006])
+adam = AdamOptim(param0, lr=1e-4)
 
 wandb.init(project='alluvion')
 config = wandb.config
@@ -340,10 +410,16 @@ config.accelerations = accelerations
 config.num_particles = num_particles
 config.half_life = approximate_half_life(dynamic_viscosity, density0,
                                          pipe_radius)
+config.lambda_factors = lambda_factors
 config.kernel_radius = kernel_radius
 config.pipe_model_radius = pipe_model_radius
 config.precision = str(dp.default_dtype)
 config.Re = pipe_radius * pipe_radius * pipe_radius * density0 * density0 * 0.25 / dynamic_viscosity / dynamic_viscosity * accelerations
+config.lr = adam.lr
+config.initial_dt = solver.initial_dt
+config.max_dt = solver.max_dt
+config.min_dt = solver.min_dt
+config.cfl = solver.cfl
 
-optimize(dp, solver, initial_x, pipe_radius, lambda_factors, density0,
-         accelerations, dynamic_viscosity)
+optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
+         lambda_factors, density0, accelerations, dynamic_viscosity)
