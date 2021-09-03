@@ -52,12 +52,11 @@ class OptimSampling:
         self.ts = ts
         self.num_sections = 14
         self.num_rotations = 16
-        self.num_rs = 31  # should be odd number to get central velocity
+        self.num_rs = 16  # should be even number
         self.num_samples = self.num_rs * self.num_sections * self.num_rotations
 
         # r contains 0 but not pipe_radius
-        self.rs = pipe_radius * 2 / (self.num_rs + 1) * (
-            np.arange(self.num_rs) - self.num_rs // 2)
+        self.rs = pipe_radius / self.num_rs * np.arange(self.num_rs)
 
         self.sample_x = dp.create_coated((self.num_samples), 3)
         self.sample_data3 = dp.create_coated((self.num_samples), 3)
