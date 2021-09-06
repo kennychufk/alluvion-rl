@@ -63,11 +63,16 @@ class OptimSampling:
 
         self.sample_x = dp.create_coated((self.num_samples), 3)
         self.sample_data3 = dp.create_coated((self.num_samples), 3)
+        self.sample_density = dp.create_coated((self.num_samples), 1)
+        self.sample_boundary = dp.create_coated(
+            (dp.cni.num_boundaries, self.num_samples), 4)
+        self.sample_boundary_kernel = dp.create_coated(
+            (dp.cni.num_boundaries, self.num_samples), 4)
         self.sample_neighbors = dp.create_coated(
             (self.num_samples, dp.cni.max_num_neighbors_per_particle), 4)
         self.sample_num_neighbors = dp.create_coated((self.num_samples), 1,
                                                      np.uint32)
-        self.sample_x_host = np.zeros((self.num_samples, 3), dp.default_dtype)
+        sample_x_host = np.zeros((self.num_samples, 3), dp.default_dtype)
         section_length = pipe_length / self.num_sections
         offset_y_per_rotation = section_length / self.num_rotations
         theta_per_rotation = np.pi * 2 / self.num_rotations
@@ -76,23 +81,28 @@ class OptimSampling:
             rotation_id = (i // self.num_rs) % (self.num_rotations)
             r_id = i % self.num_rs
             theta = theta_per_rotation * rotation_id
-            self.sample_x_host[i] = np.array([
+            sample_x_host[i] = np.array([
                 self.rs[r_id] * np.cos(theta),
                 pipe_length * -0.5 + section_length * section_id +
                 offset_y_per_rotation * rotation_id,
                 self.rs[r_id] * np.sin(theta)
             ], dp.default_dtype)
-        self.sample_x.set(self.sample_x_host)
+        self.sample_x.set(sample_x_host)
         self.dp = dp
         self.reset()
 
     def reset(self):
         self.sampling_cursor = 0
         self.vx = np.zeros((len(self.ts), self.num_rs), self.dp.default_dtype)
+        self.density = np.zeros((len(self.ts), self.num_rs),
+                                self.dp.default_dtype)
 
     def aggregate(self):
         sample_vx = self.sample_data3.get().reshape(-1, self.num_rs, 3)[..., 1]
         self.vx[self.sampling_cursor] = np.mean(sample_vx, axis=0)
+
+        density_ungrouped = self.sample_density.get().reshape(-1, self.num_rs)
+        self.density[self.sampling_cursor] = np.mean(density_ungrouped, axis=0)
         self.sampling_cursor += 1
 
 
@@ -100,6 +110,8 @@ class TemporalStat:
     def __init__(self):
         self.ts = []
         self.temporal_dict = {}
+        self.radial_density = None
+        self.rs = None
 
     def append(self, t, **kwargs):
         self.ts.append(t)
@@ -117,12 +129,22 @@ def pressurize(dp, solver, osampling):
                                                osampling.sample_neighbors,
                                                osampling.sample_num_neighbors,
                                                osampling.num_samples)
+        solver.sample_all_boundaries(osampling.sample_x,
+                                     osampling.sample_boundary,
+                                     osampling.sample_boundary_kernel,
+                                     osampling.num_samples)
         runner.launch_sample_fluid(osampling.sample_x, solver.particle_x,
                                    solver.particle_density, solver.particle_v,
                                    osampling.sample_neighbors,
                                    osampling.sample_num_neighbors,
                                    osampling.sample_data3,
                                    osampling.num_samples)
+        runner.launch_sample_density(osampling.sample_x,
+                                     osampling.sample_neighbors,
+                                     osampling.sample_num_neighbors,
+                                     osampling.sample_density,
+                                     osampling.sample_boundary_kernel,
+                                     osampling.num_samples)
         osampling.aggregate()
     solver.step_wrap1()
 
@@ -165,6 +187,8 @@ def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
         if (dp.has_display() and step_id % 20 == 0):
             dp.get_display_proxy().draw()
     dp.unmap_graphical_pointers()
+    tstat.radial_density = osampling.density
+    tstat.rs = osampling.rs
     return osampling.vx, tstat
 
 
@@ -227,7 +251,6 @@ def plot_summary(iteration, summary):
     num_rows = 1
     num_cols = len(accelerations)
     fig = plt.figure(figsize=(1024 / my_dpi, 768 / my_dpi), dpi=my_dpi)
-    cmap = plt.get_cmap("tab10")
     for acc_id, acc in enumerate(accelerations):
         ax = fig.add_subplot(num_rows, num_cols, acc_id + 1)
         tstat = summary[acc_id]
@@ -237,6 +260,17 @@ def plot_summary(iteration, summary):
         ax.set_xlabel('t (s)')
         ax.legend()
     plt.savefig(f'.alcache/density{iteration}.png')
+    plt.close('all')
+
+    fig = plt.figure(figsize=(1024 / my_dpi, 768 / my_dpi), dpi=my_dpi)
+    for acc_id, acc in enumerate(accelerations):
+        ax = fig.add_subplot(num_rows, num_cols, acc_id + 1)
+        tstat = summary[acc_id]
+        for t_id in range(len(tstat.radial_density)):
+            ax.plot(tstat.rs, tstat.radial_density[t_id], label=f"{t_id}")
+        ax.set_xlabel('r (m)')
+        ax.legend()
+    plt.savefig(f'.alcache/radial_density{iteration}.png')
     plt.close('all')
 
 
@@ -294,6 +328,13 @@ def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
     ],
                          env=os.environ.copy())
     p.wait()
+    p = subprocess.Popen([
+        "ffmpeg", "-i", ".alcache/radial_density%d.png", "-r", "30.00", "-c:v",
+        "libx264", "-crf", "21", "-pix_fmt", "yuv420p",
+        os.path.join(wandb.run.dir, "radial_density.mp4")
+    ],
+                         env=os.environ.copy())
+    p.wait()
 
 
 dp = al.Depot(np.float32)
@@ -323,7 +364,7 @@ cn.set_particle_attr(particle_radius, particle_mass, density0)
 # Pipe dimension
 pipe_radius_grid_span = 10
 initial_radius = kernel_radius * pipe_radius_grid_span
-pipe_model_radius = 7.69324 * scale_factor  # for 9900 particles. Larger than the experimental value (7.69211562500019)
+pipe_model_radius = 7.69324 * scale_factor  # 7.69324 (more stable at Re=1) for 9900 particles. Larger than the experimental value (7.69211562500019)
 pipe_length_grid_half_span = 3
 pipe_length_half = pipe_length_grid_half_span * kernel_radius
 pipe_length = 2 * pipe_length_grid_half_span * kernel_radius
@@ -420,6 +461,8 @@ config.initial_dt = solver.initial_dt
 config.max_dt = solver.max_dt
 config.min_dt = solver.min_dt
 config.cfl = solver.cfl
+config.density_change_tolerance = solver.density_change_tolerance
+config.density_error_tolerance = solver.density_error_tolerance
 
 optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
          lambda_factors, density0, accelerations, dynamic_viscosity)
