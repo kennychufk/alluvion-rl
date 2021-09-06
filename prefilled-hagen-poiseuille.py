@@ -302,6 +302,13 @@ def plot_summary(iteration, summary):
     plt.close('all')
 
 
+def make_animate_command(input_filename, output_filename):
+    return [
+        "ffmpeg", "-i", input_filename, "-r", "30.00", "-c:v", "libx264",
+        "-crf", "21", "-pix_fmt", "yuv420p", output_filename
+    ]
+
+
 def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
              lambda_factors, density0, accelerations, dynamic_viscosity):
     approx_half_life = approximate_half_life(dynamic_viscosity, density0,
@@ -343,34 +350,28 @@ def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
             log_object['∇' + param_names[param_id]] = grad[param_id]
         wandb.log(log_object)
     ## finalize
-    p = subprocess.Popen([
-        "ffmpeg", "-i", ".alcache/%d.png", "-r", "30.00", "-c:v", "libx264",
-        "-crf", "21", "-pix_fmt", "yuv420p",
-        os.path.join(wandb.run.dir, "profile.mp4")
-    ],
-                         env=os.environ.copy())
-    p.wait()
-    p = subprocess.Popen([
-        "ffmpeg", "-i", ".alcache/density%d.png", "-r", "30.00", "-c:v",
-        "libx264", "-crf", "21", "-pix_fmt", "yuv420p",
-        os.path.join(wandb.run.dir, "density_stat.mp4")
-    ],
-                         env=os.environ.copy())
-    p.wait()
-    p = subprocess.Popen([
-        "ffmpeg", "-i", ".alcache/radial_density%d.png", "-r", "30.00", "-c:v",
-        "libx264", "-crf", "21", "-pix_fmt", "yuv420p",
-        os.path.join(wandb.run.dir, "radial_density.mp4")
-    ],
-                         env=os.environ.copy())
-    p.wait()
-    p = subprocess.Popen([
-        "ffmpeg", "-i", ".alcache/density_scatter%d.png", "-r", "30.00",
-        "-c:v", "libx264", "-crf", "21", "-pix_fmt", "yuv420p",
-        os.path.join(wandb.run.dir, "density_scatter.mp4")
-    ],
-                         env=os.environ.copy())
-    p.wait()
+    subprocess.Popen(make_animate_command(".alcache/%d.png",
+                                          ".alcache/profile.mp4"),
+                     env=os.environ.copy()).wait()
+    subprocess.Popen(make_animate_command(".alcache/density%d.png",
+                                          ".alcache/density_stat.mp4"),
+                     env=os.environ.copy()).wait()
+    subprocess.Popen(make_animate_command(".alcache/radial_density%d.png",
+                                          ".alcache/radial_density.mp4"),
+                     env=os.environ.copy()).wait()
+    subprocess.Popen(make_animate_command(".alcache/density_scatter%d.png",
+                                          ".alcache/density_scatter.mp4"),
+                     env=os.environ.copy()).wait()
+    wandb.log({
+        "profile":
+        wandb.Video('.alcache/profile.mp4', fps=30, format="mp4"),
+        "density_stat":
+        wandb.Video('.alcache/density_stat.mp4', fps=30, format="mp4"),
+        "radial_density":
+        wandb.Video('.alcache/radial_density.mp4', fps=30, format="mp4"),
+        "density_scatter":
+        wandb.Video('.alcache/density_scatter.mp4', fps=30, format="mp4")
+    })
 
 
 dp = al.Depot(np.float32)
@@ -478,6 +479,13 @@ initial_particle_x.read_file(args.pos[0])
 initial_particle_x.scale(dp.f3(scale_factor, scale_factor, scale_factor))
 param0 = np.array([0.0015, 0.006])
 adam = AdamOptim(param0, lr=1e-4)
+
+old_filenames = glob.glob('.alcache/*.mp4') + glob.glob('.alcache/*.png')
+for filename in old_filenames:
+    try:
+        os.remove(filename)
+    except:
+        print("Error while deleting file : ", filename)
 
 wandb.init(project='alluvion')
 config = wandb.config
