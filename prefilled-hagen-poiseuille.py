@@ -51,12 +51,13 @@ def developing_hagen_poiseuille(r, t, dynamic_viscosity, density0, a,
 
 
 class OptimSampling:
-    def __init__(self, dp, cn, pipe_length, pipe_radius, ts):
+    def __init__(self, dp, cn, pipe_length, pipe_radius, ts, num_particles):
         self.ts = ts
         self.num_sections = 14
         self.num_rotations = 16
         self.num_rs = 16  # should be even number
         self.num_samples = self.num_rs * self.num_sections * self.num_rotations
+        self.num_particles = num_particles
 
         # r contains 0 but not pipe_radius
         self.rs = pipe_radius / self.num_rs * np.arange(self.num_rs)
@@ -96,6 +97,10 @@ class OptimSampling:
         self.vx = np.zeros((len(self.ts), self.num_rs), self.dp.default_dtype)
         self.density = np.zeros((len(self.ts), self.num_rs),
                                 self.dp.default_dtype)
+        self.r_stat = np.zeros((len(self.ts), self.num_particles),
+                               self.dp.default_dtype)
+        self.density_stat = np.zeros((len(self.ts), self.num_particles),
+                                     self.dp.default_dtype)
 
     def aggregate(self):
         sample_vx = self.sample_data3.get().reshape(-1, self.num_rs, 3)[..., 1]
@@ -112,6 +117,8 @@ class TemporalStat:
         self.temporal_dict = {}
         self.radial_density = None
         self.rs = None
+        self.density_stat = None
+        self.r_stat = None
 
     def append(self, t, **kwargs):
         self.ts.append(t)
@@ -145,6 +152,11 @@ def pressurize(dp, solver, osampling):
                                      osampling.sample_density,
                                      osampling.sample_boundary_kernel,
                                      osampling.num_samples)
+        osampling.density_stat[osampling.sampling_cursor] = dp.coat(
+            solver.particle_density).get()
+        osampling.r_stat[osampling.sampling_cursor] = LA.norm(dp.coat(
+            solver.particle_x).get()[:, [0, 2]],
+                                                              axis=1)
         osampling.aggregate()
     solver.step_wrap1()
 
@@ -189,6 +201,8 @@ def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
     dp.unmap_graphical_pointers()
     tstat.radial_density = osampling.density
     tstat.rs = osampling.rs
+    tstat.density_stat = osampling.density_stat
+    tstat.r_stat = osampling.r_stat
     return osampling.vx, tstat
 
 
@@ -273,6 +287,20 @@ def plot_summary(iteration, summary):
     plt.savefig(f'.alcache/radial_density{iteration}.png')
     plt.close('all')
 
+    fig = plt.figure(figsize=(1024 / my_dpi, 768 / my_dpi), dpi=my_dpi)
+    for acc_id, acc in enumerate(accelerations):
+        ax = fig.add_subplot(num_rows, num_cols, acc_id + 1)
+        tstat = summary[acc_id]
+        for t_id in range(len(tstat.density_stat)):
+            ax.scatter(tstat.r_stat[t_id],
+                       tstat.density_stat[t_id],
+                       label=f"{t_id}",
+                       s=0.5)
+        ax.set_xlabel('r (m)')
+        ax.legend()
+    plt.savefig(f'.alcache/density_scatter{iteration}.png')
+    plt.close('all')
+
 
 def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
              lambda_factors, density0, accelerations, dynamic_viscosity):
@@ -280,7 +308,8 @@ def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
                                              pipe_radius)
     print('approx_half_life', approx_half_life)
     ts = approx_half_life * lambda_factors
-    osampling = OptimSampling(dp, cn, pipe_length, pipe_radius, ts)
+    osampling = OptimSampling(dp, cn, pipe_length, pipe_radius, ts,
+                              solver.num_particles)
 
     best_loss = np.finfo(np.float64).max
     best_x = None
@@ -307,7 +336,7 @@ def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
         save_result(iteration, ground_truth, simulated, osampling,
                     accelerations)
         plot_summary(iteration, summary)
-        param_names = ['vis', 'bvis', 'ω_coeff', 'vis_ω']
+        param_names = ['vis', 'bvis']
         log_object = {'loss': loss, '|∇|': LA.norm(grad)}
         for param_id, param_value in enumerate(current_x):
             log_object[param_names[param_id]] = param_value
@@ -332,6 +361,13 @@ def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
         "ffmpeg", "-i", ".alcache/radial_density%d.png", "-r", "30.00", "-c:v",
         "libx264", "-crf", "21", "-pix_fmt", "yuv420p",
         os.path.join(wandb.run.dir, "radial_density.mp4")
+    ],
+                         env=os.environ.copy())
+    p.wait()
+    p = subprocess.Popen([
+        "ffmpeg", "-i", ".alcache/density_scatter%d.png", "-r", "30.00",
+        "-c:v", "libx264", "-crf", "21", "-pix_fmt", "yuv420p",
+        os.path.join(wandb.run.dir, "density_scatter.mp4")
     ],
                          env=os.environ.copy())
     p.wait()
@@ -411,6 +447,7 @@ solver = dp.SolverDf(runner,
                      enable_vorticity=False,
                      graphical=args.display)
 solver.particle_radius = particle_radius
+solver.num_particles = num_particles
 solver.initial_dt = 1e-2
 solver.max_dt = 1.0
 solver.min_dt = 0
