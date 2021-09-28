@@ -8,7 +8,7 @@ import numpy as np
 from numpy import linalg as LA
 from pathlib import Path
 import scipy.special as sc
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 from optim import AdamOptim
 
 import matplotlib
@@ -168,6 +168,11 @@ def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
     cn.gravity = dp.f3(0, acc, 0)
     cn.viscosity = param[0]
     cn.boundary_viscosity = param[1]
+    # solver.enable_divergence_solve = False
+    # solver.enable_density_solve = False
+    cn.dfsph_factor_epsilon = 1e-6
+    # solver.max_density_solve = 0
+    # solver.min_density_solve = 0
     # cn.vorticity_coeff = param[2]
     # cn.viscosity_omega = param[3]
     cn.inertia_inverse = 0.5  # recommended by author
@@ -195,9 +200,11 @@ def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
                          density_min=density_min,
                          density_max=density_max,
                          density_mean=density_mean)
-        step_id += 1
+        # if step_id % 1000 == 0:
+        #     print('cfl dt:', solver.cfl_dt, 'dt:', solver.dt, 'v2:', solver.max_v2)
         if (dp.has_display() and step_id % 20 == 0):
             dp.get_display_proxy().draw()
+        step_id += 1
     dp.unmap_graphical_pointers()
     tstat.radial_density = osampling.density
     tstat.rs = osampling.rs
@@ -233,6 +240,9 @@ def simulate(param, is_grad_eval, dp, solver, osampling, initial_particle_x,
 
 
 def mse_loss(ground_truth, simulated):
+    # scale = np.repeat(np.max(ground_truth, axis=2)[..., np.newaxis], ground_truth.shape[-1], axis=2)
+    # ground_truth_scaled = ground_truth / scale
+    # simulated_scaled = simulated / scale
     return mean_squared_error(ground_truth.flatten(), simulated.flatten())
 
 
@@ -326,7 +336,7 @@ def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
 
     with open('switch', 'w') as f:
         f.write('1')
-    for iteration in range(200):
+    for iteration in range(1):
         with open('switch', 'r') as f:
             if f.read(1) == '0':
                 break
@@ -343,7 +353,7 @@ def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
         save_result(iteration, ground_truth, simulated, osampling,
                     accelerations)
         plot_summary(iteration, summary)
-        param_names = ['vis', 'bvis']
+        param_names = ['vis', 'bvis', 'vvis', 'vbvis', 'v_shift', 'switch_k']
         log_object = {'loss': loss, '|∇|': LA.norm(grad)}
         for param_id, param_value in enumerate(current_x):
             log_object[param_names[param_id]] = param_value
@@ -401,7 +411,7 @@ cn.set_particle_attr(particle_radius, particle_mass, density0)
 # Pipe dimension
 pipe_radius_grid_span = 10
 initial_radius = kernel_radius * pipe_radius_grid_span
-pipe_model_radius = 7.69324 * scale_factor  # 7.69324 (more stable at Re=1) for 9900 particles. Larger than the experimental value (7.69211562500019)
+pipe_model_radius = 7.69211562500019 * scale_factor  # tight radius (7.69211562500019)
 pipe_length_grid_half_span = 3
 pipe_length_half = pipe_length_grid_half_span * kernel_radius
 pipe_length = 2 * pipe_length_grid_half_span * kernel_radius
@@ -414,7 +424,9 @@ print('pipe_radius', pipe_radius)
 
 # Pressurization and temporal parameters
 lambda_factors = np.array([0.5, 1.125, 1.5])
-accelerations = np.array([2**-13 / 100])
+accelerations = np.array([2**-13 / 100, 2**-8 / 100])
+# accelerations = np.array([2**-13 / 100])
+# accelerations = np.array([2**-8 / 100])
 
 # rigids
 max_num_contacts = 512
@@ -439,20 +451,22 @@ cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 cn.set_wrap_length(grid_res.y * kernel_radius)
 
-solver = dp.SolverDf(runner,
-                     pile,
-                     dp,
-                     num_particles,
-                     grid_res,
-                     enable_surface_tension=False,
-                     enable_vorticity=False,
-                     graphical=args.display)
+solver = dp.SolverI(runner,
+                    pile,
+                    dp,
+                    num_particles,
+                    grid_res,
+                    enable_surface_tension=False,
+                    enable_vorticity=False,
+                    graphical=args.display)
 solver.particle_radius = particle_radius
 solver.num_particles = num_particles
-solver.initial_dt = 1e-2
+solver.initial_dt = 0.0001
 solver.max_dt = 1.0
-solver.min_dt = 0
+solver.min_dt = 1.0
 solver.cfl = 0.2
+# solver.density_change_tolerance = 1e-4
+# solver.density_error_tolerance = 1e-4
 
 dp.copy_cn()
 
@@ -477,8 +491,9 @@ dp.copy_cn()
 initial_particle_x = dp.create((num_particles), 3)
 initial_particle_x.read_file(args.pos[0])
 initial_particle_x.scale(dp.f3(scale_factor, scale_factor, scale_factor))
-param0 = np.array([0.0015, 0.006])
-adam = AdamOptim(param0, lr=1e-4)
+param0 = np.array([0.002049, 0.006532])
+# param0 = np.array([0.002050961174642602,0.00695])
+adam = AdamOptim(param0, lr=2e-4)
 
 old_filenames = glob.glob('.alcache/*.mp4') + glob.glob('.alcache/*.png')
 for filename in old_filenames:
@@ -506,7 +521,7 @@ config.initial_dt = solver.initial_dt
 config.max_dt = solver.max_dt
 config.min_dt = solver.min_dt
 config.cfl = solver.cfl
-config.density_change_tolerance = solver.density_change_tolerance
+# config.density_change_tolerance = solver.density_change_tolerance
 config.density_error_tolerance = solver.density_error_tolerance
 
 optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
