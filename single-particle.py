@@ -16,7 +16,6 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
-cn.boundary_vol_factor = 1.0
 
 max_num_contacts = 512
 pile = dp.Pile(dp, runner, max_num_contacts)
