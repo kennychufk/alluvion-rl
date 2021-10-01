@@ -10,6 +10,7 @@ from pathlib import Path
 import scipy.special as sc
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from optim import AdamOptim
+from util import Unit
 
 import matplotlib
 matplotlib.use('Agg')
@@ -48,6 +49,12 @@ def developing_hagen_poiseuille(r, t, dynamic_viscosity, density0, a,
     return density0 * a / dynamic_viscosity * (
         0.25 * (pipe_radius * pipe_radius - r * r) -
         pipe_radius * pipe_radius * 2 * accumulation)
+
+
+def acceleration_from_terminal_velocity(terminal_v, dynamic_viscosity,
+                                        density0, pipe_radius):
+    return terminal_v * 4 * dynamic_viscosity / density0 / (pipe_radius *
+                                                            pipe_radius)
 
 
 class OptimSampling:
@@ -246,7 +253,8 @@ def mse_loss(ground_truth, simulated):
     return mean_squared_error(ground_truth.flatten(), simulated.flatten())
 
 
-def save_result(iteration, ground_truth, simulated, osampling, accelerations):
+def save_result(iteration, ground_truth, simulated, osampling, unit,
+                accelerations):
     my_dpi = 128
     num_rows = 1
     num_cols = len(accelerations)
@@ -255,22 +263,22 @@ def save_result(iteration, ground_truth, simulated, osampling, accelerations):
     for acc_id, acc in enumerate(accelerations):
         ax = fig.add_subplot(num_rows, num_cols, acc_id + 1)
         for t_id, t in enumerate(osampling.ts):
-            ax.plot(osampling.rs,
-                    ground_truth[acc_id][t_id],
+            ax.plot(unit.to_real_length(osampling.rs),
+                    unit.to_real_velocity(ground_truth[acc_id][t_id]),
                     c=cmap(t_id),
                     linewidth=5,
                     alpha=0.3)
-            ax.plot(osampling.rs,
-                    simulated[acc_id][t_id],
+            ax.plot(unit.to_real_length(osampling.rs),
+                    unit.to_real_velocity(simulated[acc_id][t_id]),
                     c=cmap(t_id),
-                    label=f"{t:.2f}s")
+                    label=f"{unit.to_real_time(t):.2f}s")
         ax.set_xlabel('r (m)')
         ax.legend()
     plt.savefig(f'.alcache/{iteration}.png')
     plt.close('all')
 
 
-def plot_summary(iteration, summary):
+def plot_summary(iteration, summary, unit):
     my_dpi = 128
     num_rows = 1
     num_cols = len(accelerations)
@@ -280,7 +288,9 @@ def plot_summary(iteration, summary):
         tstat = summary[acc_id]
         keys = ['density_min', 'density_max', 'density_mean']
         for key in keys:
-            ax.plot(tstat.ts, tstat.temporal_dict[key], label=key)
+            ax.plot(unit.to_real_time(np.array(tstat.ts)),
+                    unit.to_real_density(np.array(tstat.temporal_dict[key])),
+                    label=key)
         ax.set_xlabel('t (s)')
         ax.legend()
     plt.savefig(f'.alcache/density{iteration}.png')
@@ -291,7 +301,9 @@ def plot_summary(iteration, summary):
         ax = fig.add_subplot(num_rows, num_cols, acc_id + 1)
         tstat = summary[acc_id]
         for t_id in range(len(tstat.radial_density)):
-            ax.plot(tstat.rs, tstat.radial_density[t_id], label=f"{t_id}")
+            ax.plot(unit.to_real_time(np.array(tstat.rs)),
+                    unit.to_real_density(np.array(tstat.radial_density[t_id])),
+                    label=f"{t_id}")
         ax.set_xlabel('r (m)')
         ax.legend()
     plt.savefig(f'.alcache/radial_density{iteration}.png')
@@ -302,8 +314,9 @@ def plot_summary(iteration, summary):
         ax = fig.add_subplot(num_rows, num_cols, acc_id + 1)
         tstat = summary[acc_id]
         for t_id in range(len(tstat.density_stat)):
-            ax.scatter(tstat.r_stat[t_id],
-                       tstat.density_stat[t_id],
+            ax.scatter(unit.to_real_length(np.array(tstat.r_stat[t_id])),
+                       unit.to_real_density(np.array(
+                           tstat.density_stat[t_id])),
                        label=f"{t_id}",
                        s=0.5)
         ax.set_xlabel('r (m)')
@@ -319,12 +332,14 @@ def make_animate_command(input_filename, output_filename):
     ]
 
 
-def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
+def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
              lambda_factors, density0, accelerations, dynamic_viscosity):
     approx_half_life = approximate_half_life(dynamic_viscosity, density0,
                                              pipe_radius)
     print('approx_half_life', approx_half_life)
     ts = approx_half_life * lambda_factors
+
+    print('ts', ts)
     osampling = OptimSampling(dp, cn, pipe_length, pipe_radius, ts,
                               solver.num_particles)
 
@@ -350,9 +365,9 @@ def optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
             wandb.summary['best_loss'] = best_loss
             best_x = current_x
             wandb.summary['best_x'] = best_x
-        save_result(iteration, ground_truth, simulated, osampling,
+        save_result(iteration, ground_truth, simulated, osampling, unit,
                     accelerations)
-        plot_summary(iteration, summary)
+        plot_summary(iteration, summary, unit)
         param_names = ['vis', 'bvis', 'vvis', 'vbvis', 'v_shift', 'switch_k']
         log_object = {'loss': loss, '|∇|': LA.norm(grad)}
         for param_id, param_value in enumerate(current_x):
@@ -394,11 +409,9 @@ runner = dp.Runner()
 
 # Physical constants
 density0 = 1
-dynamic_viscosity = 0.01
 
 # Model parameters
-scale_factor = 1
-particle_radius = 0.25 * scale_factor
+particle_radius = 0.25
 kernel_radius = particle_radius * 4
 cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radius
 volume_relative_to_cube = 0.8
@@ -408,10 +421,16 @@ cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 
+# Real-world unit conversion
+unit = Unit(real_kernel_radius=0.0025,
+            real_density0=1000,
+            real_gravity=-9.80665)
+dynamic_viscosity = unit.from_real_dynamic_viscosity(1e-3)
+
 # Pipe dimension
 pipe_radius_grid_span = 10
 initial_radius = kernel_radius * pipe_radius_grid_span
-pipe_model_radius = 7.69211562500019 * scale_factor  # tight radius (7.69211562500019)
+pipe_model_radius = 7.69211562500019  # tight radius (7.69211562500019) # TODO: read from stat
 pipe_length_grid_half_span = 3
 pipe_length_half = pipe_length_grid_half_span * kernel_radius
 pipe_length = 2 * pipe_length_grid_half_span * kernel_radius
@@ -424,7 +443,12 @@ print('pipe_radius', pipe_radius)
 
 # Pressurization and temporal parameters
 lambda_factors = np.array([0.5, 1.125, 1.5])
-accelerations = np.array([2**-13 / 100, 2**-8 / 100])
+# accelerations = np.array([2**-13 / 100, 2**-8 / 100])
+terminal_vs = unit.from_real_velocity(np.array([1.6e-5, 2e-2]))
+accelerations = acceleration_from_terminal_velocity(terminal_vs,
+                                                    dynamic_viscosity,
+                                                    density0, pipe_radius)
+print('accelerations', accelerations)
 # accelerations = np.array([2**-13 / 100])
 # accelerations = np.array([2**-8 / 100])
 
@@ -461,9 +485,12 @@ solver = dp.SolverI(runner,
                     graphical=args.display)
 solver.particle_radius = particle_radius
 solver.num_particles = num_particles
-solver.initial_dt = 0.0001
-solver.max_dt = 1.0
-solver.min_dt = 1.0
+# solver.max_dt = 0.2
+# solver.max_dt = 0.1 * real_kernel_radius * inv_real_time
+solver.max_dt = unit.from_real_time(100 * unit.rl)
+solver.min_dt = solver.max_dt
+print('dt', solver.max_dt)
+solver.initial_dt = 0.1
 solver.cfl = 0.2
 # solver.density_change_tolerance = 1e-4
 # solver.density_error_tolerance = 1e-4
@@ -490,8 +517,9 @@ dp.copy_cn()
 
 initial_particle_x = dp.create((num_particles), 3)
 initial_particle_x.read_file(args.pos[0])
-initial_particle_x.scale(dp.f3(scale_factor, scale_factor, scale_factor))
-param0 = np.array([0.002049, 0.006532])
+# param0 = np.array([0.002049, 0.006532
+#                    ]) * unit.rt * (unit.inv_rl / 100) * (unit.inv_rl / 100)
+param0 = unit.from_real_kinematic_viscosity(np.array([2.049e-6, 6.532e-6]))
 # param0 = np.array([0.002050961174642602,0.00695])
 adam = AdamOptim(param0, lr=2e-4)
 
@@ -516,6 +544,7 @@ config.kernel_radius = kernel_radius
 config.pipe_model_radius = pipe_model_radius
 config.precision = str(dp.default_dtype)
 config.Re = pipe_radius * pipe_radius * pipe_radius * density0 * density0 * 0.25 / dynamic_viscosity / dynamic_viscosity * accelerations
+print('Re', config.Re)
 config.lr = adam.lr
 config.initial_dt = solver.initial_dt
 config.max_dt = solver.max_dt
@@ -524,5 +553,5 @@ config.cfl = solver.cfl
 # config.density_change_tolerance = solver.density_change_tolerance
 config.density_error_tolerance = solver.density_error_tolerance
 
-optimize(dp, solver, adam, param0, initial_particle_x, pipe_radius,
+optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
          lambda_factors, density0, accelerations, dynamic_viscosity)
