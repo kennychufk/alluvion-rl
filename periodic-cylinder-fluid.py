@@ -19,7 +19,6 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
-cn.boundary_vol_factor = 1.0
 
 pipe_radius_grid_span = int(sys.argv[1])
 current_radius = kernel_radius * pipe_radius_grid_span
@@ -94,7 +93,7 @@ while True:
     current_radius -= radius_decrease_rate
     pile.replace(0,
                  dp.InfiniteCylinderDistance.create(current_radius),
-                 al.uint3(map_lateral_res, map_lateral_res, map_lateral_res),
+                 al.uint3(map_lateral_res, 1, map_lateral_res),
                  sign=-1)
     pile.build_grids(kernel_radius)
     pile.reallocate_kinematics_on_device()

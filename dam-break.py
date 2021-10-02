@@ -42,9 +42,13 @@ cn.viscosity_omega = 0.1
 max_num_contacts = 512
 pile = dp.Pile(dp, runner, max_num_contacts)
 cube_mesh = al.Mesh()
-container_dim = unit.from_real_length(al.float3(0.4, 0.3, 0.15))
+real_outset = unit.rl * 0.5  # NOTE: unstable when equal to unit.rl
+container_dim = unit.from_real_length(al.float3(0.4, 0.3, 0.15) + real_outset)
 cube_mesh.set_box(container_dim, 4)
-pile.add(dp.BoxDistance.create(unit.from_real_length(dp.f3(0.4, 0.3, 0.15))),
+container_distance = dp.BoxDistance.create(
+    unit.from_real_length(dp.f3(0.4, 0.3, 0.15)),
+    outset=unit.from_real_length(real_outset))
+pile.add(container_distance,
          al.uint3(80, 60, 30),
          sign=-1,
          thickness=0,
@@ -102,18 +106,24 @@ pile.set_gravity(gravity)
 cn.contact_tolerance = particle_radius
 
 block_mode = 0
-box_min = unit.from_real_length(dp.f3(-0.195, 0, -0.05))
-box_max = unit.from_real_length(dp.f3(-0.095, 0.1, 0.05))
+y_shift_due_to_outset = dp.f3(0, real_outset, 0)
+box_min = unit.from_real_length(dp.f3(-0.195, 0,
+                                      -0.05)) - y_shift_due_to_outset
+box_max = unit.from_real_length(dp.f3(-0.095, 0.1,
+                                      0.05)) - y_shift_due_to_outset
 num_particles = dp.Runner.get_fluid_block_num_particles(
     mode=block_mode,
     box_min=box_min,
     box_max=box_max,
     particle_radius=particle_radius)
-grid_res = al.uint3(
-    int(math.ceil(container_dim.x / kernel_radius)) + 2,
-    int(math.ceil(container_dim.y / kernel_radius)),
-    int(math.ceil(container_dim.z / kernel_radius)) + 2)
-grid_offset = al.int3(-int(grid_res.x) // 2, 0, -int(grid_res.z) // 2)
+container_aabb_range = container_distance.aabb_max - container_distance.aabb_min
+container_aabb_range_per_h = container_aabb_range / kernel_radius
+grid_res = al.uint3(int(math.ceil(container_aabb_range_per_h.x)),
+                    int(math.ceil(container_aabb_range_per_h.y)),
+                    int(math.ceil(container_aabb_range_per_h.z))) + 4
+grid_offset = al.int3(-(int(grid_res.x) // 2) - 2,
+                      -int(math.ceil(real_outset / kernel_radius)) - 1,
+                      -(int(grid_res.z) // 2) - 2)
 
 cni.grid_res = grid_res
 cni.grid_offset = grid_offset
