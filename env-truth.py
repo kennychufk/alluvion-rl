@@ -2,6 +2,9 @@ import alluvion as al
 import numpy as np
 from pathlib import Path
 import argparse
+import math
+
+from util import Unit
 
 parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--input', type=str, default='')
@@ -13,31 +16,37 @@ dp.create_display(800, 600, "", False)
 display_proxy = dp.get_display_proxy()
 runner = dp.Runner()
 
-particle_radius = 2**-11
-kernel_radius = particle_radius * 4
-density0 = 1000.0
+particle_radius = 0.25
+kernel_radius = 1.0
+density0 = 1.0
 cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radius
 volume_relative_to_cube = 0.8
 particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
-gravity = dp.f3(0, -9.81, 0)
+
+gravity = dp.f3(0, -1, 0)
+
+# real_kernel_radius = 0.0025
+unit = Unit(real_kernel_radius=0.005,
+            real_density0=1000,
+            real_gravity=-9.80665)
 
 cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 cn.boundary_epsilon = 1e-9
 cn.gravity = gravity
-cn.viscosity = 1.37916076e-05
-cn.boundary_viscosity = 4.96210578e-07
+cn.viscosity, cn.boundary_viscosity = unit.from_real_kinematic_viscosity(
+    np.array([2.049e-6, 6.532e-6]))
 
 # rigids
 max_num_contacts = 512
 pile = dp.Pile(dp, runner, max_num_contacts)
 
-container_width = 0.24
+container_width = unit.from_real_length(0.24)
 container_dim = dp.f3(container_width, container_width, container_width)
 container_mesh = al.Mesh()
 container_mesh.set_box(container_dim, 8)
-container_distance = dp.BoxDistance(container_dim)
+container_distance = dp.BoxDistance.create(container_dim, outset=0.46153312)
 pile.add(container_distance,
          al.uint3(64, 64, 64),
          sign=-1,
@@ -51,29 +60,37 @@ pile.add(container_distance,
          q=dp.f4(0, 0, 0, 1),
          display_mesh=al.Mesh())
 
-inset_factor = 1.71
+current_inset = 0.403
 
-cylinder_radius = 3.00885e-3
-cylinder_height = 38.5e-3
-cylinder_comy = -8.8521e-3
-cylinder_mass = 1.06e-3
+cylinder_radius = unit.from_real_length(3.0088549658278843e-3)
+cylinder_height = unit.from_real_length(38.5e-3)
+cylinder_mass = unit.from_real_mass(1.06e-3)  # TODO: randomize
+cylinder_comy = unit.from_real_length(-8.852102803738316e-3)
+cylinder_volume = cylinder_radius * cylinder_radius * np.pi * cylinder_height
+cylinder_neutral_buoyant_force = -cylinder_volume * density0 * gravity.y
 cylinder_mesh = al.Mesh()
 cylinder_mesh.set_cylinder(cylinder_radius, cylinder_height, 24, 24)
 cylinder_mesh.translate(dp.f3(0, -cylinder_comy, 0))
-cylinder_distance = dp.CylinderDistance(cylinder_radius, cylinder_height,
-                                        cylinder_comy)
+cylinder_inertia = unit.from_real_moment_of_inertia(
+    dp.f3(7.911343969145678e-8, 2.944622178863632e-8, 7.911343969145678e-8))
+cylinder_map_radial_size = 24
+cylinder_map_dim = al.uint3(
+    cylinder_map_radial_size,
+    int(cylinder_map_radial_size * cylinder_height / cylinder_radius / 2),
+    cylinder_map_radial_size)
 
-num_buoys = 7
+num_buoys = 8
 for i in range(num_buoys):
-    pile.add(cylinder_distance,
-             al.uint3(20, 128, 20),
+    pile.add(dp.CylinderDistance.create(cylinder_radius - current_inset,
+                                        cylinder_height - current_inset * 2,
+                                        cylinder_comy),
+             cylinder_map_dim,
              sign=1,
-             thickness=-particle_radius * inset_factor,
              collision_mesh=cylinder_mesh,
              mass=cylinder_mass,
              restitution=0.3,
              friction=0.4,
-             inertia_tensor=dp.f3(7.91134e-8, 2.94462e-9, 7.91134e-8),
+             inertia_tensor=cylinder_inertia,
              x=dp.f3(
                  np.random.uniform(-container_width * 0.45,
                                    container_width * 0.45),
@@ -84,24 +101,28 @@ for i in range(num_buoys):
              display_mesh=cylinder_mesh)
 
 bunny_mesh = al.Mesh()
-bunny_filename = 'bunny-foo.obj'
+bunny_filename = '3dmodels/bunny-pa.obj'
 bunny_mesh.set_obj(bunny_filename)
-bunny_triangle_mesh = dp.TriangleMesh(bunny_filename)
-bunny_distance = dp.MeshDistance(bunny_triangle_mesh)
+bunny_mesh.scale(unit.from_real_length(0.04))
+bunny_density = unit.from_real_density(800)
+bunny_mass, bunny_com, bunny_inertia, bunny_inertia_off_diag = bunny_mesh.calculate_mass_properties(
+    bunny_density)
+bunny_triangle_mesh = dp.TriangleMesh()
+bunny_mesh.copy_to(bunny_triangle_mesh)
+bunny_distance = dp.MeshDistance.create(bunny_triangle_mesh)
 bunny_id = pile.add(bunny_distance,
                     al.uint3(40, 40, 40),
                     sign=1,
-                    thickness=0,
                     collision_mesh=bunny_mesh,
-                    mass=231,
+                    mass=bunny_mass,
                     restitution=0.8,
                     friction=0.3,
-                    inertia_tensor=dp.f3(1, 1, 1),
-                    x=dp.f3(0, container_width * 0.36, 0),
+                    inertia_tensor=bunny_inertia,
+                    x=dp.f3(0, container_width * 0.5, 0),
                     q=dp.f4(0, 0, 0, 1),
                     display_mesh=bunny_mesh)
 
-pile.build_grids(4 * kernel_radius)
+pile.build_grids(2 * kernel_radius)
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
 cn.contact_tolerance = particle_radius
@@ -122,41 +143,39 @@ max_num_particles = dp.Runner.get_fluid_block_num_particles(
     box_max=box_max,
     particle_radius=particle_radius)
 print('num_particles', max_num_particles)
-grid_side = int(np.ceil((container_width + kernel_radius * 2) / kernel_radius))
-grid_side += (grid_side % 2 == 1)
-# grid_side = 64
-grid_res = al.uint3(grid_side, grid_side, grid_side)
-print('grid_res', grid_res)
-grid_offset = al.int3(-grid_side // 2, -1, -grid_side // 2)
-
-cni.grid_res = grid_res
-cni.grid_offset = grid_offset
+container_aabb_range = container_distance.aabb_max - container_distance.aabb_min
+container_aabb_range_per_h = container_aabb_range / kernel_radius
+cni.grid_res = al.uint3(int(math.ceil(container_aabb_range_per_h.x)),
+                        int(math.ceil(container_aabb_range_per_h.y)),
+                        int(math.ceil(container_aabb_range_per_h.z))) + 4
+cni.grid_offset = al.int3(
+    -(int(cni.grid_res.x) // 2) - 2,
+    -int(math.ceil(container_distance.outset / kernel_radius)) - 1,
+    -(int(cni.grid_res.z) // 2) - 2)
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
-solver = dp.SolverDf(runner,
-                     pile,
-                     dp,
-                     max_num_particles,
-                     grid_res,
-                     enable_surface_tension=False,
-                     enable_vorticity=False,
-                     graphical=True)
+solver = dp.SolverI(runner,
+                    pile,
+                    dp,
+                    max_num_particles,
+                    cni.grid_res,
+                    enable_surface_tension=False,
+                    enable_vorticity=False,
+                    graphical=True)
 particle_normalized_attr = dp.create_graphical((max_num_particles), 1)
 
-solver.dt = 1e-3
-solver.max_dt = particle_radius * 0.12
-solver.min_dt = 0.0
-solver.cfl = 0.14
-solver.particle_radius = particle_radius
 solver.num_particles = max_num_particles
+solver.max_dt = unit.from_real_time(0.1 * unit.rl)
+solver.initial_dt = solver.max_dt
+solver.min_dt = 0
+solver.cfl = 0.4
 
 dp.copy_cn()
 
 dp.map_graphical_pointers()
 if len(args.input) == 0:
-    runner.launch_create_fluid_block(256,
-                                     solver.particle_x,
+    runner.launch_create_fluid_block(solver.particle_x,
                                      solver.num_particles,
                                      offset=0,
                                      mode=block_mode,
@@ -167,7 +186,9 @@ else:
     solver.particle_v.read_file(f'{args.input}-v.alu')
     pile.read_file(f'{args.input}.pile', num_buoys + 2)
 dp.unmap_graphical_pointers()
-display_proxy.set_camera(al.float3(0, 0.06, 0.4), al.float3(0, 0.06, 0))
+display_proxy.set_camera(unit.from_real_length(al.float3(0, 0.06, 0.4)),
+                         unit.from_real_length(al.float3(0, 0.06, 0)))
+display_proxy.set_clip_planes(unit.to_real_length(1), box_max.z * 20)
 colormap_tex = display_proxy.create_colormap_viridis()
 
 # display_proxy.add_map_graphical_pointers(dp)
@@ -210,7 +231,7 @@ while True:
                                          solver.num_particles)
             pile.write_file('rest-block.pile')
             break
-    for frame_interstep in range(100):
+    for frame_interstep in range(10):
         if solver.t >= (next_frame_id * frame_interval):
             solver.particle_x.write_file(
                 f'{frame_directory}/x-{next_frame_id}.alu',
@@ -230,16 +251,20 @@ while True:
             dp.default_dtype)
 
         if remaining_force_time <= 0 and next_force_time < 0:
-            next_force_time = solver.t + np.random.rand(1) * 0.12
+            next_force_time = solver.t + unit.from_real_time(
+                np.random.rand(1) * 0.12)
             print('next_force_time', next_force_time)
         if next_force_time <= solver.t and remaining_force_time <= 0:
             next_force_time = -1
-            remaining_force_time = np.random.rand(1) * 2.8
+            remaining_force_time = unit.from_real_time(np.random.rand(1) * 0.8)
             bunny_x = pile.x[bunny_id]
-            bunny_angular_acc = (np.random.rand(3) - 0.5) * 2.1 * np.pi
-            bunny_a = np.random.uniform(low=1.0, high=6.0, size=3)
+            bunny_angular_acc = unit.from_real_angular_acceleration(
+                (np.random.rand(3) - 0.5) * 20.1 * np.pi)
+            bunny_a = unit.from_real_acceleration(
+                np.random.uniform(low=1.0, high=5.0, size=3))
             bunny_a[0] *= -(np.sign(bunny_x.x))
-            bunny_a[1] = (np.random.rand(1) - 0.7) * 4.0
+            bunny_a[1] = unit.from_real_acceleration(
+                (np.random.rand(1) - 0.7) * 2.0)
             bunny_a[2] *= -(np.sign(bunny_x.z))
             print('start force', bunny_a, bunny_angular_acc)
 
@@ -253,8 +278,11 @@ while True:
             remaining_force_time -= solver.dt
         ###### move object #########
         solver.step()
-        print(solver.dt)
+    print(
+        f"t = {unit.to_real_time(solver.t) } dt = {unit.to_real_time(solver.dt)} cfl = {solver.utilized_cfl} num solves = {solver.num_density_solve}"
+    )
 
-    solver.normalize(solver.particle_v, particle_normalized_attr, 0, 2)
+    solver.normalize(solver.particle_v, particle_normalized_attr, 0,
+                     unit.from_real_velocity(0.02))
     dp.unmap_graphical_pointers()
     display_proxy.draw()

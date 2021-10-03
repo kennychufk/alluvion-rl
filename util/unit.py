@@ -40,6 +40,12 @@ class Unit:
     def to_real_velocity(self, v):
         return v * (self.rl * self.inv_rt)
 
+    def from_real_acceleration(self, a):
+        return a * (self.inv_rl * self.rt * self.rt)
+
+    def to_real_acceleration(self, a):
+        return a * (self.rl * self.inv_rt * self.inv_rt)
+
     def from_real_time(self, t):
         return t * self.inv_rt
 
@@ -55,3 +61,9 @@ class Unit:
     def from_real_moment_of_inertia(self, i):
         return i * (self.inv_rdensity0 * self.inv_rl * self.inv_rl *
                     self.inv_rl * self.inv_rl * self.inv_rl)
+
+    def from_real_angular_acceleration(self, aa):
+        return aa * (self.rt * self.rt)
+
+    def to_real_angular_acceleration(self, aa):
+        return aa * (self.inv_rt * self.inv_rt)

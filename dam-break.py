@@ -29,7 +29,6 @@ unit = Unit(real_kernel_radius=0.005,
 cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
-# cn.boundary_vol_factor = 1.0
 cn.gravity = gravity
 cn.viscosity, cn.boundary_viscosity = unit.from_real_kinematic_viscosity(
     np.array([2.049e-6, 6.532e-6]))
