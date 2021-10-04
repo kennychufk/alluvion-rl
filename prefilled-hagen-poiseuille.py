@@ -10,7 +10,7 @@ from pathlib import Path
 import scipy.special as sc
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from optim import AdamOptim
-from util import Unit
+from util import Unit, FluidSample
 
 import matplotlib
 matplotlib.use('Agg')
@@ -57,34 +57,23 @@ def acceleration_from_terminal_velocity(terminal_v, dynamic_viscosity,
                                                             pipe_radius)
 
 
-class OptimSampling:
-    def __init__(self, dp, cn, pipe_length, pipe_radius, ts, num_particles):
+class OptimSampling(FluidSample):
+    def __init__(self, dp, pipe_length, pipe_radius, ts, num_particles):
         self.ts = ts
         self.num_sections = 14
         self.num_rotations = 16
         self.num_rs = 16  # should be even number
-        self.num_samples = self.num_rs * self.num_sections * self.num_rotations
         self.num_particles = num_particles
 
         # r contains 0 but not pipe_radius
         self.rs = pipe_radius / self.num_rs * np.arange(self.num_rs)
 
-        self.sample_x = dp.create_coated((self.num_samples), 3)
-        self.sample_data3 = dp.create_coated((self.num_samples), 3)
-        self.sample_density = dp.create_coated((self.num_samples), 1)
-        self.sample_boundary = dp.create_coated(
-            (dp.cni.num_boundaries, self.num_samples), 4)
-        self.sample_boundary_kernel = dp.create_coated(
-            (dp.cni.num_boundaries, self.num_samples), 4)
-        self.sample_neighbors = dp.create_coated(
-            (self.num_samples, dp.cni.max_num_neighbors_per_particle), 4)
-        self.sample_num_neighbors = dp.create_coated((self.num_samples), 1,
-                                                     np.uint32)
-        sample_x_host = np.zeros((self.num_samples, 3), dp.default_dtype)
+        num_samples = self.num_rs * self.num_sections * self.num_rotations
+        sample_x_host = np.zeros((num_samples, 3), dp.default_dtype)
         section_length = pipe_length / self.num_sections
         offset_y_per_rotation = section_length / self.num_rotations
         theta_per_rotation = np.pi * 2 / self.num_rotations
-        for i in range(self.num_samples):
+        for i in range(num_samples):
             section_id = i // (self.num_rs * self.num_rotations)
             rotation_id = (i // self.num_rs) % (self.num_rotations)
             r_id = i % self.num_rs
@@ -95,8 +84,7 @@ class OptimSampling:
                 offset_y_per_rotation * rotation_id,
                 self.rs[r_id] * np.sin(theta)
             ], dp.default_dtype)
-        self.sample_x.set(sample_x_host)
-        self.dp = dp
+        super().__init__(dp, sample_x_host)
         self.reset()
 
     def reset(self):
@@ -113,7 +101,7 @@ class OptimSampling:
         sample_vx = self.sample_data3.get().reshape(-1, self.num_rs, 3)[..., 1]
         self.vx[self.sampling_cursor] = np.mean(sample_vx, axis=0)
 
-        density_ungrouped = self.sample_density.get().reshape(-1, self.num_rs)
+        density_ungrouped = self.sample_data1.get().reshape(-1, self.num_rs)
         self.density[self.sampling_cursor] = np.mean(density_ungrouped, axis=0)
         self.sampling_cursor += 1
 
@@ -137,28 +125,9 @@ class TemporalStat:
 
 def pressurize(dp, solver, osampling):
     if solver.t >= osampling.ts[osampling.sampling_cursor]:
-        solver.update_particle_neighbors_wrap1()
-        runner.launch_make_neighbor_list_wrap1(osampling.sample_x, solver.pid,
-                                               solver.pid_length,
-                                               osampling.sample_neighbors,
-                                               osampling.sample_num_neighbors,
-                                               osampling.num_samples)
-        solver.sample_all_boundaries(osampling.sample_x,
-                                     osampling.sample_boundary,
-                                     osampling.sample_boundary_kernel,
-                                     osampling.num_samples)
-        runner.launch_sample_fluid(osampling.sample_x, solver.particle_x,
-                                   solver.particle_density, solver.particle_v,
-                                   osampling.sample_neighbors,
-                                   osampling.sample_num_neighbors,
-                                   osampling.sample_data3,
-                                   osampling.num_samples)
-        runner.launch_sample_density(osampling.sample_x,
-                                     osampling.sample_neighbors,
-                                     osampling.sample_num_neighbors,
-                                     osampling.sample_density,
-                                     osampling.sample_boundary_kernel,
-                                     osampling.num_samples)
+        osampling.prepare_neighbor_and_boundary_wrap1(runner, solver)
+        osampling.sample_vector3(runner, solver, solver.particle_v)
+        osampling.sample_density(runner)
         osampling.density_stat[osampling.sampling_cursor] = dp.coat(
             solver.particle_density).get()
         osampling.r_stat[osampling.sampling_cursor] = LA.norm(dp.coat(
@@ -340,7 +309,7 @@ def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
     ts = approx_half_life * lambda_factors
 
     print('ts', ts)
-    osampling = OptimSampling(dp, cn, pipe_length, pipe_radius, ts,
+    osampling = OptimSampling(dp, pipe_length, pipe_radius, ts,
                               solver.num_particles)
 
     best_loss = np.finfo(np.float64).max
