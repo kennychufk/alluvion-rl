@@ -271,9 +271,13 @@ next_truth_frame_id = 0
 visual_real_freq = 30.0
 visual_real_interval = 1.0 / visual_real_freq
 next_visual_frame_id = 0
+visual_x_scaled = dp.create_coated(solver.particle_x.get_shape(), 3)
 
 target_t = unit.from_real_time(10.0)
 
+v_scale = unit.to_real_velocity(1)
+x_scale = unit.to_real_length(1)
+omega_scale = unit.to_real_angular_velocity(1)
 with open('switch', 'w') as f:
     f.write('1')
 while generating_initial or solver.t < target_t:
@@ -292,10 +296,14 @@ while generating_initial or solver.t < target_t:
             if solver.t >= unit.from_real_time(
                     next_truth_frame_id * truth_real_interval):
                 sampling.prepare_neighbor_and_boundary(runner, solver)
-                sampling.sample_velocity(runner, solver).write_file(
+                sample_v = sampling.sample_velocity(runner, solver)
+                sample_v.scale(dp.f3(v_scale, v_scale, v_scale))
+                sample_v.write_file(
                     f'{frame_directory}/v-{next_truth_frame_id}.alu',
                     sampling.num_samples)
-                sampling.sample_density(runner).write_file(
+                sample_density = sampling.sample_density(runner)
+                sample_density.scale(unit.to_real_density(1))
+                sample_density.write_file(
                     f'{frame_directory}/density-{next_truth_frame_id}.alu',
                     sampling.num_samples)
                 pile.write_file(
@@ -303,11 +311,14 @@ while generating_initial or solver.t < target_t:
                 next_truth_frame_id += 1
             if solver.t >= unit.from_real_time(
                     next_visual_frame_id * visual_real_interval):
-                solver.particle_x.write_file(
+                visual_x_scaled.set_from(solver.particle_x)
+                visual_x_scaled.scale(dp.f3(x_scale, x_scale, x_scale))
+                visual_x_scaled.write_file(
                     f'{frame_directory}/visual-x-{next_visual_frame_id}.alu',
                     solver.num_particles)
                 pile.write_file(
-                    f'{frame_directory}/visual-{next_visual_frame_id}.pile')
+                    f'{frame_directory}/visual-{next_visual_frame_id}.pile',
+                    x_scale, v_scale, omega_scale)
                 next_visual_frame_id += 1
             ###### move object #########
             bunny_v_al = pile.v[bunny_id]

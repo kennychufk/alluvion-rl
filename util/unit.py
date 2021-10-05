@@ -62,6 +62,12 @@ class Unit:
         return i * (self.inv_rdensity0 * self.inv_rl * self.inv_rl *
                     self.inv_rl * self.inv_rl * self.inv_rl)
 
+    def from_real_angular_velocity(self, omega):
+        return omega * self.rt
+
+    def to_real_angular_velocity(self, omega):
+        return omega * self.inv_rt
+
     def from_real_angular_acceleration(self, aa):
         return aa * (self.rt * self.rt)
 
