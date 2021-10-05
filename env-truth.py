@@ -1,13 +1,16 @@
-import alluvion as al
-import numpy as np
 from pathlib import Path
 import argparse
 import math
+import time
+import numpy as np
+import xxhash
 
-from util import Unit
+import alluvion as al
+
+from util import Unit, FluidSample
 
 parser = argparse.ArgumentParser(description='RL ground truth generator')
-parser.add_argument('--input', type=str, default='')
+parser.add_argument('--initial', type=str, default='')
 args = parser.parse_args()
 dp = al.Depot(np.float32)
 cn = dp.cn
@@ -100,27 +103,37 @@ for i in range(num_buoys):
              q=dp.f4(0, 0, 0, 1),
              display_mesh=cylinder_mesh)
 
-bunny_mesh = al.Mesh()
-bunny_filename = '3dmodels/bunny-pa.obj'
-bunny_mesh.set_obj(bunny_filename)
-bunny_mesh.scale(unit.from_real_length(0.04))
-bunny_density = unit.from_real_density(800)
-bunny_mass, bunny_com, bunny_inertia, bunny_inertia_off_diag = bunny_mesh.calculate_mass_properties(
-    bunny_density)
-bunny_triangle_mesh = dp.TriangleMesh()
-bunny_mesh.copy_to(bunny_triangle_mesh)
-bunny_distance = dp.MeshDistance.create(bunny_triangle_mesh)
-bunny_id = pile.add(bunny_distance,
-                    al.uint3(40, 40, 40),
-                    sign=1,
-                    collision_mesh=bunny_mesh,
-                    mass=bunny_mass,
-                    restitution=0.8,
-                    friction=0.3,
-                    inertia_tensor=bunny_inertia,
-                    x=dp.f3(0, container_width * 0.5, 0),
-                    q=dp.f4(0, 0, 0, 1),
-                    display_mesh=bunny_mesh)
+generating_initial = (len(args.initial) == 0)
+
+if not generating_initial:
+    bunny_mesh = al.Mesh()
+    bunny_filename = '3dmodels/bunny-pa.obj'
+    bunny_mesh.set_obj(bunny_filename)
+    bunny_max_radius = unit.from_real_length(0.04)
+    bunny_mesh.scale(bunny_max_radius)
+    bunny_density = unit.from_real_density(800)
+    bunny_mass, bunny_com, bunny_inertia, bunny_inertia_off_diag = bunny_mesh.calculate_mass_properties(
+        bunny_density)
+    bunny_triangle_mesh = dp.TriangleMesh()
+    bunny_mesh.copy_to(bunny_triangle_mesh)
+    bunny_distance = dp.MeshDistance.create(bunny_triangle_mesh)
+    bunny_xz_half_range = container_width * 0.5 - bunny_max_radius - kernel_radius
+    bunny_id = pile.add(bunny_distance,
+                        al.uint3(40, 40, 40),
+                        sign=1,
+                        collision_mesh=bunny_mesh,
+                        mass=bunny_mass,
+                        restitution=0.8,
+                        friction=0.3,
+                        inertia_tensor=bunny_inertia,
+                        x=dp.f3(
+                            np.random.uniform(low=-bunny_xz_half_range,
+                                              high=bunny_xz_half_range),
+                            container_width * 0.29,
+                            np.random.uniform(low=-bunny_xz_half_range,
+                                              high=bunny_xz_half_range)),
+                        q=dp.f4(0, 0, 0, 1),
+                        display_mesh=bunny_mesh)
 
 pile.build_grids(2 * kernel_radius)
 pile.reallocate_kinematics_on_device()
@@ -173,8 +186,30 @@ solver.cfl = 0.4
 
 dp.copy_cn()
 
+# Sampling
+num_samples_per_dim = 24
+num_samples = num_samples_per_dim * num_samples_per_dim * num_samples_per_dim
+sample_x_np = np.zeros((num_samples, 3), dp.default_dtype)
+
+samle_box_min = dp.f3(container_width * -0.5, 0, container_width * -0.5)
+samle_box_max = dp.f3(container_width * 0.5, container_width,
+                      container_width * 0.5)
+samle_box_size = samle_box_max - samle_box_min
+for i in range(num_samples):
+    z_id = i % num_samples_per_dim
+    y_id = i % (num_samples_per_dim *
+                num_samples_per_dim) // num_samples_per_dim
+    x_id = i // (num_samples_per_dim * num_samples_per_dim)
+    sample_x_np[i] = np.array([
+        samle_box_min.x + samle_box_size.x / (num_samples_per_dim - 1) * x_id,
+        samle_box_min.y + samle_box_size.y / (num_samples_per_dim - 1) * y_id,
+        samle_box_min.z + samle_box_size.z / (num_samples_per_dim - 1) * z_id
+    ])
+sampling = FluidSample(dp, sample_x_np)
+
 dp.map_graphical_pointers()
-if len(args.input) == 0:
+
+if generating_initial:
     runner.launch_create_fluid_block(solver.particle_x,
                                      solver.num_particles,
                                      offset=0,
@@ -182,9 +217,9 @@ if len(args.input) == 0:
                                      box_min=box_min,
                                      box_max=box_max)
 else:
-    solver.particle_x.read_file(f'{args.input}-x.alu')
-    solver.particle_v.read_file(f'{args.input}-v.alu')
-    pile.read_file(f'{args.input}.pile', num_buoys + 2)
+    solver.particle_x.read_file(f'{args.initial}/x.alu')
+    solver.particle_v.read_file(f'{args.initial}/v.alu')
+    pile.read_file(f'{args.initial}/container_buoys.pile', num_buoys + 1)
 dp.unmap_graphical_pointers()
 display_proxy.set_camera(unit.from_real_length(al.float3(0, 0.06, 0.4)),
                          unit.from_real_length(al.float3(0, 0.06, 0)))
@@ -213,70 +248,104 @@ display_proxy.add_pile_shading_program(pile)
 next_force_time = 0.0
 remaining_force_time = 0.0
 
-frame_directory = 'rl-truth-e6a7da'
-Path(frame_directory).mkdir(parents=True, exist_ok=True)
-fps = 60.0
-frame_interval = 1.0 / fps
-next_frame_id = 0
+hasher = xxhash.xxh32()
+hasher.reset()
+timestamp = time.time()
+timestamp_str = time.strftime('%m%d.%H.%M.%S', time.localtime(timestamp))
+hasher.update(bytearray("{}".format(timestamp), 'utf8'))
+timestamp_hash = hasher.hexdigest()
+
+if generating_initial:
+    initial_directory = f'rlinit-{timestamp_hash}-{timestamp_str}'
+    Path(initial_directory).mkdir(parents=True, exist_ok=True)
+else:
+    frame_directory = f'rltruth-{timestamp_hash}-{timestamp_str}'
+    Path(frame_directory).mkdir(parents=True, exist_ok=True)
+    with open(f'{frame_directory}/init.txt', 'w') as f:
+        f.write(args.initial)
+
+truth_real_freq = 100.0
+truth_real_interval = 1.0 / truth_real_freq
+next_truth_frame_id = 0
+
+visual_real_freq = 30.0
+visual_real_interval = 1.0 / visual_real_freq
+next_visual_frame_id = 0
+
+target_t = unit.from_real_time(10.0)
 
 with open('switch', 'w') as f:
     f.write('1')
-while True:
+while generating_initial or solver.t < target_t:
     dp.map_graphical_pointers()
-    with open('switch', 'r') as f:
-        if f.read(1) == '0':
-            solver.particle_x.write_file('rest-block-x.alu',
-                                         solver.num_particles)
-            solver.particle_v.write_file('rest-block-v.alu',
-                                         solver.num_particles)
-            pile.write_file('rest-block.pile')
-            break
+    if generating_initial:
+        with open('switch', 'r') as f:
+            if f.read(1) == '0':
+                solver.particle_x.write_file(f'{initial_directory}/x.alu',
+                                             solver.num_particles)
+                solver.particle_v.write_file(f'{initial_directory}/v.alu',
+                                             solver.num_particles)
+                pile.write_file(f'{initial_directory}/container_buoys.pile')
+                break
     for frame_interstep in range(10):
-        if solver.t >= (next_frame_id * frame_interval):
-            solver.particle_x.write_file(
-                f'{frame_directory}/x-{next_frame_id}.alu',
-                solver.num_particles)
-            solver.particle_v.write_file(
-                f'{frame_directory}/v-{next_frame_id}.alu',
-                solver.num_particles)
-            pile.write_file(f'{frame_directory}/{next_frame_id}.pile')
-            next_frame_id += 1
-        ###### move object #########
-        bunny_v_al = pile.v[bunny_id]
-        bunny_omega_al = pile.omega[bunny_id]
-        bunny_v = np.array([bunny_v_al.x, bunny_v_al.y, bunny_v_al.z],
-                           dp.default_dtype)
-        bunny_omega = np.array(
-            [bunny_omega_al.x, bunny_omega_al.y, bunny_omega_al.z],
-            dp.default_dtype)
+        if not generating_initial:
+            if solver.t >= unit.from_real_time(
+                    next_truth_frame_id * truth_real_interval):
+                sampling.prepare_neighbor_and_boundary(runner, solver)
+                sampling.sample_velocity(runner, solver).write_file(
+                    f'{frame_directory}/v-{next_truth_frame_id}.alu',
+                    sampling.num_samples)
+                sampling.sample_density(runner).write_file(
+                    f'{frame_directory}/density-{next_truth_frame_id}.alu',
+                    sampling.num_samples)
+                pile.write_file(
+                    f'{frame_directory}/{next_truth_frame_id}.pile')
+                next_truth_frame_id += 1
+            if solver.t >= unit.from_real_time(
+                    next_visual_frame_id * visual_real_interval):
+                solver.particle_x.write_file(
+                    f'{frame_directory}/visual-x-{next_visual_frame_id}.alu',
+                    solver.num_particles)
+                pile.write_file(
+                    f'{frame_directory}/visual-{next_visual_frame_id}.pile')
+                next_visual_frame_id += 1
+            ###### move object #########
+            bunny_v_al = pile.v[bunny_id]
+            bunny_omega_al = pile.omega[bunny_id]
+            bunny_v = np.array([bunny_v_al.x, bunny_v_al.y, bunny_v_al.z],
+                               dp.default_dtype)
+            bunny_omega = np.array(
+                [bunny_omega_al.x, bunny_omega_al.y, bunny_omega_al.z],
+                dp.default_dtype)
 
-        if remaining_force_time <= 0 and next_force_time < 0:
-            next_force_time = solver.t + unit.from_real_time(
-                np.random.rand(1) * 0.12)
-            print('next_force_time', next_force_time)
-        if next_force_time <= solver.t and remaining_force_time <= 0:
-            next_force_time = -1
-            remaining_force_time = unit.from_real_time(np.random.rand(1) * 0.8)
-            bunny_x = pile.x[bunny_id]
-            bunny_angular_acc = unit.from_real_angular_acceleration(
-                (np.random.rand(3) - 0.5) * 20.1 * np.pi)
-            bunny_a = unit.from_real_acceleration(
-                np.random.uniform(low=1.0, high=5.0, size=3))
-            bunny_a[0] *= -(np.sign(bunny_x.x))
-            bunny_a[1] = unit.from_real_acceleration(
-                (np.random.rand(1) - 0.7) * 2.0)
-            bunny_a[2] *= -(np.sign(bunny_x.z))
-            print('start force', bunny_a, bunny_angular_acc)
+            if remaining_force_time <= 0 and next_force_time < 0:
+                next_force_time = solver.t + unit.from_real_time(
+                    np.random.rand(1) * 0.12)
+                print('next_force_time', next_force_time)
+            if next_force_time <= solver.t and remaining_force_time <= 0:
+                next_force_time = -1
+                remaining_force_time = unit.from_real_time(
+                    np.random.rand(1) * 0.8)
+                bunny_x = pile.x[bunny_id]
+                bunny_angular_acc = unit.from_real_angular_acceleration(
+                    (np.random.rand(3) - 0.5) * 20.1 * np.pi)
+                bunny_a = unit.from_real_acceleration(
+                    np.random.uniform(low=1.0, high=5.0, size=3))
+                bunny_a[0] *= -(np.sign(bunny_x.x))
+                bunny_a[1] = unit.from_real_acceleration(
+                    (np.random.rand(1) - 0.7) * 2.0)
+                bunny_a[2] *= -(np.sign(bunny_x.z))
+                print('start force', bunny_a, bunny_angular_acc)
 
-        if remaining_force_time > 0:
-            bunny_v += bunny_a * solver.dt
-            bunny_omega += bunny_angular_acc * solver.dt
+            if remaining_force_time > 0:
+                bunny_v += bunny_a * solver.dt
+                bunny_omega += bunny_angular_acc * solver.dt
 
-            pile.v[bunny_id] = dp.f3(bunny_v[0], bunny_v[1], bunny_v[2])
-            pile.omega[bunny_id] = dp.f3(bunny_omega[0], bunny_omega[1],
-                                         bunny_omega[2])
-            remaining_force_time -= solver.dt
-        ###### move object #########
+                pile.v[bunny_id] = dp.f3(bunny_v[0], bunny_v[1], bunny_v[2])
+                pile.omega[bunny_id] = dp.f3(bunny_omega[0], bunny_omega[1],
+                                             bunny_omega[2])
+                remaining_force_time -= solver.dt
+            ###### move object #########
         solver.step()
     print(
         f"t = {unit.to_real_time(solver.t) } dt = {unit.to_real_time(solver.dt)} cfl = {solver.utilized_cfl} num solves = {solver.num_density_solve}"
