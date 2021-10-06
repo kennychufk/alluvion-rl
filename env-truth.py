@@ -11,6 +11,7 @@ from util import Unit, FluidSample
 
 parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--initial', type=str, default='')
+parser.add_argument('--output-dir', type=str, default='.')
 args = parser.parse_args()
 dp = al.Depot(np.float32)
 cn = dp.cn
@@ -28,7 +29,6 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
 
-# real_kernel_radius = 0.0025
 unit = Unit(real_kernel_radius=0.005,
             real_density0=1000,
             real_gravity=-9.80665)
@@ -148,14 +148,12 @@ box_min = dp.f3((container_width - 2 * kernel_radius) * -edge_factor,
 box_max = dp.f3((container_width - 2 * kernel_radius) * edge_factor,
                 container_width * 0.32,
                 (container_width - kernel_radius * 2) * edge_factor)
-# box_min = dp.f3(container_width * -0.45, 0,  container_width * -0.45)
-# box_max = dp.f3(0, container_width * 0.46, 0)
-max_num_particles = dp.Runner.get_fluid_block_num_particles(
+num_particles = dp.Runner.get_fluid_block_num_particles(
     mode=block_mode,
     box_min=box_min,
     box_max=box_max,
     particle_radius=particle_radius)
-print('num_particles', max_num_particles)
+print('num_particles', num_particles)
 container_aabb_range = container_distance.aabb_max - container_distance.aabb_min
 container_aabb_range_per_h = container_aabb_range / kernel_radius
 cni.grid_res = al.uint3(int(math.ceil(container_aabb_range_per_h.x)),
@@ -171,14 +169,14 @@ cni.max_num_neighbors_per_particle = 64
 solver = dp.SolverI(runner,
                     pile,
                     dp,
-                    max_num_particles,
+                    num_particles,
                     cni.grid_res,
                     enable_surface_tension=False,
                     enable_vorticity=False,
                     graphical=True)
-particle_normalized_attr = dp.create_graphical((max_num_particles), 1)
+particle_normalized_attr = dp.create_graphical((num_particles), 1)
 
-solver.num_particles = max_num_particles
+solver.num_particles = num_particles
 solver.max_dt = unit.from_real_time(0.1 * unit.rl)
 solver.initial_dt = solver.max_dt
 solver.min_dt = 0
@@ -219,25 +217,13 @@ if generating_initial:
 else:
     solver.particle_x.read_file(f'{args.initial}/x.alu')
     solver.particle_v.read_file(f'{args.initial}/v.alu')
+    solver.particle_pressure.read_file(f'{args.initial}/pressure.alu')
     pile.read_file(f'{args.initial}/container_buoys.pile', num_buoys + 1)
 dp.unmap_graphical_pointers()
 display_proxy.set_camera(unit.from_real_length(al.float3(0, 0.06, 0.4)),
                          unit.from_real_length(al.float3(0, 0.06, 0)))
 display_proxy.set_clip_planes(unit.to_real_length(1), box_max.z * 20)
 colormap_tex = display_proxy.create_colormap_viridis()
-
-# display_proxy.add_map_graphical_pointers(dp)
-# display_proxy.add_step(solver, 10)
-# display_proxy.add_normalize(solver, solver.particle_v,
-#                             particle_normalized_attr, 0, 2)
-# display_proxy.add_unmap_graphical_pointers(dp)
-# display_proxy.add_particle_shading_program(solver.particle_x,
-#                                            particle_normalized_attr,
-#                                            colormap_tex,
-#                                            solver.particle_radius, solver)
-# display_proxy.add_pile_shading_program(pile)
-#
-# display_proxy.run()
 
 display_proxy.add_particle_shading_program(solver.particle_x,
                                            particle_normalized_attr,
@@ -256,10 +242,10 @@ hasher.update(bytearray("{}".format(timestamp), 'utf8'))
 timestamp_hash = hasher.hexdigest()
 
 if generating_initial:
-    initial_directory = f'rlinit-{timestamp_hash}-{timestamp_str}'
+    initial_directory = f'{args.output_dir}/rlinit-{timestamp_hash}-{timestamp_str}'
     Path(initial_directory).mkdir(parents=True, exist_ok=True)
 else:
-    frame_directory = f'rltruth-{timestamp_hash}-{timestamp_str}'
+    frame_directory = f'{args.output_dir}/rltruth-{timestamp_hash}-{timestamp_str}'
     Path(frame_directory).mkdir(parents=True, exist_ok=True)
     with open(f'{frame_directory}/init.txt', 'w') as f:
         f.write(args.initial)
@@ -289,6 +275,8 @@ while generating_initial or solver.t < target_t:
                                              solver.num_particles)
                 solver.particle_v.write_file(f'{initial_directory}/v.alu',
                                              solver.num_particles)
+                solver.particle_pressure.write_file(
+                    f'{initial_directory}/pressure.alu', solver.num_particles)
                 pile.write_file(f'{initial_directory}/container_buoys.pile')
                 break
     for frame_interstep in range(10):
