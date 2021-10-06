@@ -109,7 +109,6 @@ solver.dt = 1e-3
 solver.max_dt = particle_radius * 0.2
 solver.min_dt = 0.0
 solver.cfl = 0.15
-solver.particle_radius = particle_radius
 solver.num_particles = max_num_particles
 
 dp.copy_cn()

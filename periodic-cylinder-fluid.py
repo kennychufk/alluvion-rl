@@ -62,7 +62,6 @@ solver.dt = 1e-3
 solver.max_dt = 1e-3
 solver.min_dt = 0.0
 solver.cfl = 2e-2
-solver.particle_radius = particle_radius
 dp.copy_cn()
 
 dp.map_graphical_pointers()

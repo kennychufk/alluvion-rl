@@ -120,7 +120,6 @@ solver.max_dt = unit.from_real_time(0.01 * unit.rl)
 solver.initial_dt = solver.max_dt * 0.01
 solver.min_dt = 0
 solver.cfl = 0.02
-solver.particle_radius = particle_radius
 solver.num_particles = num_particles
 
 dp.copy_cn()

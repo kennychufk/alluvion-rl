@@ -52,7 +52,6 @@ solver.dt = 1e-3
 solver.max_dt = 1e-3
 solver.min_dt = 0.0
 solver.cfl = 2e-2
-solver.particle_radius = particle_radius
 dp.coat(solver.particle_x).set(np.zeros(3))
 dp.copy_cn()
 

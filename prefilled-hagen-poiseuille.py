@@ -452,7 +452,6 @@ solver = dp.SolverI(runner,
                     enable_surface_tension=False,
                     enable_vorticity=False,
                     graphical=args.display)
-solver.particle_radius = particle_radius
 solver.num_particles = num_particles
 # solver.max_dt = 0.2
 # solver.max_dt = 0.1 * real_kernel_radius * inv_real_time
