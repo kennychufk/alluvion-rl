@@ -2,8 +2,10 @@ import numpy as np
 
 
 class FluidSample:
-    def __init__(self, dp, sample_x_np):
-        self.num_samples = sample_x_np.shape[0]
+    def __init__(self, dp, x_src):
+        set_with_file = isinstance(x_src, str)
+        self.num_samples = dp.get_alu_info(
+            x_src)[0][0] if set_with_file else x_src.shape[0]
 
         self.sample_x = dp.create_coated((self.num_samples), 3)
         self.sample_data3 = dp.create_coated((self.num_samples), 3)
@@ -16,8 +18,20 @@ class FluidSample:
             (self.num_samples, dp.cni.max_num_neighbors_per_particle), 4)
         self.sample_num_neighbors = dp.create_coated((self.num_samples), 1,
                                                      np.uint32)
-        self.sample_x.set(sample_x_np)
+        if set_with_file:
+            self.sample_x.read_file(x_src)
+        else:
+            self.sample_x.set(x_src)
         self.dp = dp
+
+    def destroy_variables(self):
+        self.dp.remove(self.sample_x)
+        self.dp.remove(self.sample_data3)
+        self.dp.remove(self.sample_data1)
+        self.dp.remove(self.sample_boundary)
+        self.dp.remove(self.sample_boundary_kernel)
+        self.dp.remove(self.sample_neighbors)
+        self.dp.remove(self.sample_num_neighbors)
 
     def prepare_neighbor_and_boundary(self, runner, solver):
         solver.update_particle_neighbors()

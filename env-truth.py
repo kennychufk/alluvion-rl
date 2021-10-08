@@ -3,11 +3,10 @@ import argparse
 import math
 import time
 import numpy as np
-import xxhash
 
 import alluvion as al
 
-from util import Unit, FluidSample
+from util import Unit, FluidSample, get_timestamp_and_hash
 
 parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--initial', type=str, default='')
@@ -174,7 +173,7 @@ solver = dp.SolverI(runner,
                     enable_surface_tension=False,
                     enable_vorticity=False,
                     graphical=True)
-particle_normalized_attr = dp.create_graphical((num_particles), 1)
+particle_normalized_attr = dp.create_graphical_like(solver.particle_density)
 
 solver.num_particles = num_particles
 solver.max_dt = unit.from_real_time(0.1 * unit.rl)
@@ -183,27 +182,6 @@ solver.min_dt = 0
 solver.cfl = 0.4
 
 dp.copy_cn()
-
-# Sampling
-num_samples_per_dim = 24
-num_samples = num_samples_per_dim * num_samples_per_dim * num_samples_per_dim
-sample_x_np = np.zeros((num_samples, 3), dp.default_dtype)
-
-samle_box_min = dp.f3(container_width * -0.5, 0, container_width * -0.5)
-samle_box_max = dp.f3(container_width * 0.5, container_width,
-                      container_width * 0.5)
-samle_box_size = samle_box_max - samle_box_min
-for i in range(num_samples):
-    z_id = i % num_samples_per_dim
-    y_id = i % (num_samples_per_dim *
-                num_samples_per_dim) // num_samples_per_dim
-    x_id = i // (num_samples_per_dim * num_samples_per_dim)
-    sample_x_np[i] = np.array([
-        samle_box_min.x + samle_box_size.x / (num_samples_per_dim - 1) * x_id,
-        samle_box_min.y + samle_box_size.y / (num_samples_per_dim - 1) * y_id,
-        samle_box_min.z + samle_box_size.z / (num_samples_per_dim - 1) * z_id
-    ])
-sampling = FluidSample(dp, sample_x_np)
 
 dp.map_graphical_pointers()
 
@@ -234,13 +212,7 @@ display_proxy.add_pile_shading_program(pile)
 next_force_time = 0.0
 remaining_force_time = 0.0
 
-hasher = xxhash.xxh32()
-hasher.reset()
-timestamp = time.time()
-timestamp_str = time.strftime('%m%d.%H.%M.%S', time.localtime(timestamp))
-hasher.update(bytearray("{}".format(timestamp), 'utf8'))
-timestamp_hash = hasher.hexdigest()
-
+timestamp_str, timestamp_hash = get_timestamp_and_hash()
 if generating_initial:
     initial_directory = f'{args.output_dir}/rlinit-{timestamp_hash}-{timestamp_str}'
     Path(initial_directory).mkdir(parents=True, exist_ok=True)
@@ -250,6 +222,34 @@ else:
     with open(f'{frame_directory}/init.txt', 'w') as f:
         f.write(args.initial)
 
+# Sampling
+num_samples_per_dim = 24
+num_samples = num_samples_per_dim * num_samples_per_dim * num_samples_per_dim
+sample_x_np = np.zeros((num_samples, 3), dp.default_dtype)
+
+samle_box_min = dp.f3(container_width * -0.5, 0, container_width * -0.5)
+samle_box_max = dp.f3(container_width * 0.5, container_width,
+                      container_width * 0.5)
+samle_box_size = samle_box_max - samle_box_min
+for i in range(num_samples):
+    z_id = i % num_samples_per_dim
+    y_id = i % (num_samples_per_dim *
+                num_samples_per_dim) // num_samples_per_dim
+    x_id = i // (num_samples_per_dim * num_samples_per_dim)
+    sample_x_np[i] = np.array([
+        samle_box_min.x + samle_box_size.x / (num_samples_per_dim - 1) * x_id,
+        samle_box_min.y + samle_box_size.y / (num_samples_per_dim - 1) * y_id,
+        samle_box_min.z + samle_box_size.z / (num_samples_per_dim - 1) * z_id
+    ])
+sampling = FluidSample(dp, sample_x_np)
+if not generating_initial:
+    real_sample_x = dp.create_coated_like(sampling.sample_x)
+    real_sample_x.set_from(sampling.sample_x)
+    real_sample_x.scale(unit.to_real_length(1))
+    real_sample_x.write_file(f'{frame_directory}/sample-x.alu',
+                             sampling.num_samples)
+    dp.remove(real_sample_x)
+
 truth_real_freq = 100.0
 truth_real_interval = 1.0 / truth_real_freq
 next_truth_frame_id = 0
@@ -257,13 +257,10 @@ next_truth_frame_id = 0
 visual_real_freq = 30.0
 visual_real_interval = 1.0 / visual_real_freq
 next_visual_frame_id = 0
-visual_x_scaled = dp.create_coated(solver.particle_x.get_shape(), 3)
+visual_x_scaled = dp.create_coated_like(solver.particle_x)
 
 target_t = unit.from_real_time(10.0)
 
-v_scale = unit.to_real_velocity(1)
-x_scale = unit.to_real_length(1)
-omega_scale = unit.to_real_angular_velocity(1)
 with open('switch', 'w') as f:
     f.write('1')
 while generating_initial or solver.t < target_t:
@@ -285,7 +282,7 @@ while generating_initial or solver.t < target_t:
                     next_truth_frame_id * truth_real_interval):
                 sampling.prepare_neighbor_and_boundary(runner, solver)
                 sample_v = sampling.sample_velocity(runner, solver)
-                sample_v.scale(dp.f3(v_scale, v_scale, v_scale))
+                sample_v.scale(unit.to_real_velocity(1))
                 sample_v.write_file(
                     f'{frame_directory}/v-{next_truth_frame_id}.alu',
                     sampling.num_samples)
@@ -295,18 +292,21 @@ while generating_initial or solver.t < target_t:
                     f'{frame_directory}/density-{next_truth_frame_id}.alu',
                     sampling.num_samples)
                 pile.write_file(
-                    f'{frame_directory}/{next_truth_frame_id}.pile')
+                    f'{frame_directory}/{next_truth_frame_id}.pile',
+                    unit.to_real_length(1), unit.to_real_velocity(1),
+                    unit.to_real_angular_velocity(1))
                 next_truth_frame_id += 1
             if solver.t >= unit.from_real_time(
                     next_visual_frame_id * visual_real_interval):
                 visual_x_scaled.set_from(solver.particle_x)
-                visual_x_scaled.scale(dp.f3(x_scale, x_scale, x_scale))
+                visual_x_scaled.scale(unit.to_real_length(1))
                 visual_x_scaled.write_file(
                     f'{frame_directory}/visual-x-{next_visual_frame_id}.alu',
                     solver.num_particles)
                 pile.write_file(
                     f'{frame_directory}/visual-{next_visual_frame_id}.pile',
-                    x_scale, v_scale, omega_scale)
+                    unit.to_real_length(1), unit.to_real_velocity(1),
+                    unit.to_real_angular_velocity(1))
                 next_visual_frame_id += 1
             ###### move object #########
             bunny_v_al = pile.v[bunny_id]
