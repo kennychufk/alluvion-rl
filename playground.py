@@ -34,7 +34,6 @@ def make_obs(dp, unit, truth_buoy_pile_real, usher):
         (dp.coat(truth_buoy_pile_real.x).get().flatten(),
          dp.coat(truth_buoy_pile_real.v).get().flatten(),
          dp.coat(truth_buoy_pile_real.q).get().flatten(),
-         dp.coat(truth_buoy_pile_real.omega).get().flatten(),
          unit.to_real_velocity(dp.coat(usher.sample_v).get()).flatten(),
          dp.coat(usher.sample_density).get().flatten()),
         axis=None)
@@ -50,8 +49,7 @@ def set_usher_param(usher, dp, unit, truth_buoy_pile_real, act_aggregated):
         unit.from_real_length(act_aggregated[:num_buoys]))
     dp.coat(usher.drive_strength).set(
         unit.from_real_angular_velocity(act_aggregated[num_buoys:]))
-    # print(dp.coat(usher.drive_kernel_radius).get())
-    # print(dp.coat(usher.drive_strength).get())
+    # print(dp.coat(usher.drive_kernel_radius).get(),dp.coat(usher.drive_strength).get())
 
 
 dp = al.Depot(np.float32)
@@ -70,7 +68,7 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
 
-unit = Unit(real_kernel_radius=0.008,
+unit = Unit(real_kernel_radius=0.020,
             real_density0=1000,
             real_gravity=-9.80665)
 
@@ -146,7 +144,7 @@ solver = dp.SolverI(runner,
 particle_normalized_attr = dp.create_graphical((num_particles), 1)
 
 solver.num_particles = num_particles
-solver.max_dt = unit.from_real_time(0.1 * unit.rl)
+solver.max_dt = unit.from_real_time(0.05 * unit.rl)
 solver.initial_dt = solver.max_dt
 solver.min_dt = 0
 solver.cfl = 0.4
@@ -215,15 +213,17 @@ truth_buoy_pile_real = dp.Pile(dp, runner, 0)
 for i in range(num_buoys):
     truth_buoy_pile_real.add(dp.SphereDistance.create(0), al.uint3(64, 64, 64))
 
-agent = DDPGAgent(actor_lr=2e-5,
-                  critic_lr=2e-4,
-                  critic_weight_decay=1e-2,
-                  obs_dim=17 * num_buoys,
-                  act_dim=2 * num_buoys,
-                  hidden_sizes=[2048, 1800],
-                  soft_update_rate=0.001,
-                  batch_size=64,
-                  final_layer_magnitude=1e-4)
+agent = DDPGAgent(
+    actor_lr=2e-5,
+    critic_lr=2e-4,
+    critic_weight_decay=1e-2,
+    obs_dim=14 * num_buoys,
+    act_dim=2 * num_buoys,
+    hidden_sizes=[2048, 1800],
+    # hidden_sizes=[2048, 4096, 8192, 8192, 4096, 2048, 2048],
+    soft_update_rate=0.001,
+    batch_size=64,
+    final_layer_magnitude=1e-4)
 wandb.init(project='alluvion-rl')
 config = wandb.config
 config.actor_lr = agent.actor_lr
@@ -240,12 +240,15 @@ config.seed = args.seed
 
 wandb.watch(agent.critic)
 
+with open('switch', 'w') as f:
+    f.write('1')
 while True:
     with open('switch', 'r') as f:
         if f.read(1) == '0':
             break
     dir_id = random.randrange(len(ground_truth_dir_list))
     ground_truth_dir = ground_truth_dir_list[dir_id]
+    print(dir_id, ground_truth_dir)
     sampling = FluidSample(dp, f'{ground_truth_dir}/sample-x.alu')
     sampling.sample_x.scale(unit.from_real_length(1))
     dp.map_graphical_pointers()
@@ -288,7 +291,10 @@ while True:
             dp.coat(truth_buoy_pile_real.x).get())
         dp.coat(solver.usher.sample_x).set(truth_buoy_x_np)  # TODO: redundant?
 
-        act_aggregated = agent.get_action(obs)
+        act_aggregated = agent.get_action(obs, enable_noise=False)
+        if np.sum(np.isnan(act_aggregated)) > 0:
+            print(obs, act_aggregated)
+            sys.exit(0)
         set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
                         act_aggregated)
         dp.map_graphical_pointers()
