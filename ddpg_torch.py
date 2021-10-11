@@ -64,7 +64,7 @@ class ReplayBuffer:
 
 
 class MLPQFunction(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_magnitude):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
         super(MLPQFunction, self).__init__()
 
         obs_net_elements = []
@@ -91,10 +91,8 @@ class MLPQFunction(nn.Module):
             m for m in self.mix_net.modules()
             if not isinstance(m, nn.Sequential)
         ][-1]
-        final_layer.weight.data.uniform_(-final_layer_magnitude,
-                                         final_layer_magnitude)
-        final_layer.bias.data.uniform_(-final_layer_magnitude,
-                                       final_layer_magnitude)
+        final_layer.weight.data.mul_(final_layer_scale)
+        final_layer.bias.data.mul_(final_layer_scale)
 
     def forward(self, obs, act):
         obs_net_out = self.obs_net(obs)
@@ -102,7 +100,7 @@ class MLPQFunction(nn.Module):
 
 
 class MLPActor(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_magnitude):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
         super(MLPActor, self).__init__()
         self.act_dim = act_dim
         elements = []
@@ -117,10 +115,8 @@ class MLPActor(nn.Module):
         final_layer = [
             m for m in self.net.modules() if not isinstance(m, nn.Sequential)
         ][-1]
-        final_layer.weight.data.uniform_(-final_layer_magnitude,
-                                         final_layer_magnitude)
-        final_layer.bias.data.uniform_(-final_layer_magnitude,
-                                       final_layer_magnitude)
+        final_layer.weight.data.mul_(final_layer_scale)
+        final_layer.bias.data.mul_(final_layer_scale)
 
     def forward(self, state):
         x = self.net(state)
@@ -138,7 +134,7 @@ class DDPGAgent:
                  soft_update_rate,
                  gamma=0.99,
                  replay_size=1000000,
-                 final_layer_magnitude=3e-3,
+                 final_layer_scale=3e-3,
                  batch_size=64):
         self.gamma = gamma
         self.soft_update_rate = soft_update_rate
@@ -150,28 +146,28 @@ class DDPGAgent:
         self.obs_dim = obs_dim
         self.act_dim = act_dim
         self.hidden_sizes = hidden_sizes
-        self.final_layer_magnitude = final_layer_magnitude
+        self.final_layer_scale = final_layer_scale
         self.memory = ReplayBuffer(replay_size, obs_dim, act_dim)
 
         self.actor = MLPActor(obs_dim, act_dim, hidden_sizes,
-                              final_layer_magnitude)
+                              final_layer_scale)
         self.actor.to(torch.device('cuda'))
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)
         self.critic = MLPQFunction(obs_dim, act_dim, hidden_sizes,
-                                   final_layer_magnitude)
+                                   final_layer_scale)
         self.critic.to(torch.device('cuda'))
         self.critic_optimizer = optim.Adam(self.critic.parameters(),
                                            lr=critic_lr,
                                            weight_decay=critic_weight_decay)
 
         self.target_actor = MLPActor(obs_dim, act_dim, hidden_sizes,
-                                     final_layer_magnitude)
+                                     final_layer_scale)
         self.target_actor.to(torch.device('cuda'))
         self.target_critic = MLPQFunction(obs_dim, act_dim, hidden_sizes,
-                                          final_layer_magnitude)
+                                          final_layer_scale)
         self.target_critic.to(torch.device('cuda'))
 
-        self.noise = OrnsteinUhlenbeckProcess(act_dim)
+        self.noise = OrnsteinUhlenbeckProcess(act_dim, sigma=1e-4)
 
         DDPGAgent.hard_update(self.target_actor, self.actor)
         DDPGAgent.hard_update(self.target_critic, self.critic)

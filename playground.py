@@ -29,14 +29,18 @@ torch.manual_seed(args.seed)
 
 # TODO: distance to boundary, normal to boundary
 # using real unit except density: which is relative to density0
-def make_obs(dp, unit, truth_buoy_pile_real, usher):
-    return np.concatenate(
-        (dp.coat(truth_buoy_pile_real.x).get().flatten(),
-         dp.coat(truth_buoy_pile_real.v).get().flatten(),
-         dp.coat(truth_buoy_pile_real.q).get().flatten(),
-         unit.to_real_velocity(dp.coat(usher.sample_v).get()).flatten(),
-         dp.coat(usher.sample_density).get().flatten()),
-        axis=None)
+def make_obs(dp, unit, truth_buoy_pile_real, usher, num_buoys):
+    obs_aggregated = np.zeros([num_buoys, agent.obs_dim], dp.default_dtype)
+    for buoy_id in range(num_buoys):
+        obs_aggregated[buoy_id] = np.concatenate(
+            (dp.coat(truth_buoy_pile_real.x).get()[buoy_id].flatten(),
+             dp.coat(truth_buoy_pile_real.v).get()[buoy_id].flatten(),
+             dp.coat(truth_buoy_pile_real.q).get()[buoy_id].flatten(),
+             unit.to_real_velocity(dp.coat(
+                 usher.sample_v).get())[buoy_id].flatten(),
+             dp.coat(usher.sample_density).get()[buoy_id].flatten()),
+            axis=None)
+    return obs_aggregated
 
 
 def set_usher_param(usher, dp, unit, truth_buoy_pile_real, act_aggregated):
@@ -45,10 +49,8 @@ def set_usher_param(usher, dp, unit, truth_buoy_pile_real, act_aggregated):
         unit.from_real_length(dp.coat(truth_buoy_pile_real.x).get()))
     dp.coat(usher.drive_v).set(
         unit.from_real_velocity(dp.coat(truth_buoy_pile_real.v).get()))
-    dp.coat(usher.drive_kernel_radius).set(
-        unit.from_real_length(act_aggregated[:num_buoys]))
     dp.coat(usher.drive_strength).set(
-        unit.from_real_angular_velocity(act_aggregated[num_buoys:]))
+        unit.from_real_angular_velocity(act_aggregated.flatten()))
     # print(dp.coat(usher.drive_kernel_radius).get(),dp.coat(usher.drive_strength).get())
 
 
@@ -214,16 +216,16 @@ for i in range(num_buoys):
     truth_buoy_pile_real.add(dp.SphereDistance.create(0), al.uint3(64, 64, 64))
 
 agent = DDPGAgent(
-    actor_lr=2e-5,
-    critic_lr=2e-4,
+    actor_lr=1e-5,
+    critic_lr=1e-4,
     critic_weight_decay=1e-2,
-    obs_dim=14 * num_buoys,
-    act_dim=2 * num_buoys,
-    hidden_sizes=[2048, 1800],
-    # hidden_sizes=[2048, 4096, 8192, 8192, 4096, 2048, 2048],
+    obs_dim=14,
+    act_dim=1,
+    # hidden_sizes=[2048, 1800],
+    hidden_sizes=[2048, 4192, 4192, 1800],
     soft_update_rate=0.001,
     batch_size=64,
-    final_layer_magnitude=1e-4)
+    final_layer_scale=1e-5)
 wandb.init(project='alluvion-rl')
 config = wandb.config
 config.actor_lr = agent.actor_lr
@@ -235,7 +237,7 @@ config.hidden_sizes = agent.hidden_sizes
 config.soft_update_rate = agent.soft_update_rate
 config.gamma = agent.gamma
 config.replay_size = agent.replay_size
-config.final_layer_magnitude = agent.final_layer_magnitude
+config.final_layer_scale = agent.final_layer_scale
 config.seed = args.seed
 
 wandb.watch(agent.critic)
@@ -246,7 +248,8 @@ while True:
     with open('switch', 'r') as f:
         if f.read(1) == '0':
             break
-    dir_id = random.randrange(len(ground_truth_dir_list))
+    # dir_id = random.randrange(len(ground_truth_dir_list))
+    dir_id = 0
     ground_truth_dir = ground_truth_dir_list[dir_id]
     print(dir_id, ground_truth_dir)
     sampling = FluidSample(dp, f'{ground_truth_dir}/sample-x.alu')
@@ -266,18 +269,19 @@ while True:
     dp.coat(solver.usher.sample_x).set(truth_buoy_x_np)
     solver.sample_usher()
 
-    obs = make_obs(dp, unit, truth_buoy_pile_real, solver.usher)
+    obs_aggregated = make_obs(dp, unit, truth_buoy_pile_real, solver.usher,
+                              num_buoys)
 
     dp.unmap_graphical_pointers()
     # clear usher
-    initial_drive_radius = unit.to_real_length(
-        np.ones(num_buoys, dp.default_dtype))
+    dp.coat(solver.usher.drive_kernel_radius).set(
+        np.ones(num_buoys, dp.default_dtype) * 2)
     initial_strength = np.zeros(num_buoys, dp.default_dtype)
-    set_usher_param(
-        solver.usher, dp, unit, truth_buoy_pile_real,
-        np.concatenate((initial_drive_radius, initial_strength), axis=None))
+    set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
+                    initial_strength)
 
     score = 0
+    do_nothing_score = 0
 
     num_frames = 1000
     truth_real_freq = 100.0
@@ -291,22 +295,23 @@ while True:
             dp.coat(truth_buoy_pile_real.x).get())
         dp.coat(solver.usher.sample_x).set(truth_buoy_x_np)  # TODO: redundant?
 
-        act_aggregated = agent.get_action(obs, enable_noise=True)
+        act_aggregated = np.zeros([num_buoys], dp.default_dtype)
+        act_aggregated = agent.get_action(obs_aggregated, enable_noise=True)
         if np.sum(np.isnan(act_aggregated)) > 0:
-            print(obs, act_aggregated)
+            print(obs_aggregated, act_aggregated)
             sys.exit(0)
         set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
                         act_aggregated)
         dp.map_graphical_pointers()
         while (solver.t < target_t):
             solver.step()
-            # TODO: do sub-frame choose_action
         # print(frame_id)
         truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id+1}.pile',
                                        num_buoys, 0, 1)
         solver.update_particle_neighbors()
         solver.sample_usher()
-        new_obs = make_obs(dp, unit, truth_buoy_pile_real, solver.usher)
+        new_obs_aggregated = make_obs(dp, unit, truth_buoy_pile_real,
+                                      solver.usher, num_buoys)
 
         # find reward
         sampling.prepare_neighbor_and_boundary(runner, solver)
@@ -319,12 +324,18 @@ while True:
             f'{ground_truth_dir}/v-{frame_id+1}.alu')
         truth_v_real_np = sampling.sample_data3.get()
         reward = -mean_squared_error(simulation_v_real_np, truth_v_real_np)
+        do_nothing_reward = -mean_squared_error(np.zeros_like(truth_v_real_np),
+                                                truth_v_real_np)
 
-        agent.remember(obs, act_aggregated, reward, new_obs,
-                       int(frame_id == (num_frames - 2)))
+        for buoy_id in range(num_buoys):
+            agent.remember(obs_aggregated[buoy_id], act_aggregated[buoy_id],
+                           (reward - do_nothing_reward) * 100,
+                           new_obs_aggregated[buoy_id],
+                           int(frame_id == (num_frames - 2)))
         agent.learn()
         score += reward
-        obs = new_obs
+        do_nothing_score += do_nothing_reward
+        obs_aggregated = new_obs_aggregated
 
         solver.normalize(solver.particle_v, particle_normalized_attr, 0,
                          unit.from_real_velocity(0.02))
@@ -334,6 +345,10 @@ while True:
 
     if episode_id % 50 == 0:
         agent.save_models(wandb.run.dir)
-    wandb.log({'score': score, 'score100': np.mean(list(score_history))})
+    wandb.log({
+        'score': score,
+        'offset_score': (score - do_nothing_score),
+        'score100': np.mean(list(score_history))
+    })
     sampling.destroy_variables()
     episode_id += 1
