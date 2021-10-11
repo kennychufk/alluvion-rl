@@ -123,20 +123,8 @@ class MLPActor(nn.Module):
                                        final_layer_magnitude)
 
     def forward(self, state):
-        num_buoys = self.act_dim // 2
         x = self.net(state)
-        x_activated = torch.zeros_like(x)
-        if x.dim() == 2:
-            x_activated[:, :num_buoys] = F.softplus(
-                x[:, :num_buoys])  # radius, positive
-            x_activated[:, num_buoys:] = F.relu(
-                x[:, num_buoys:])  # strength, non-negative
-        else:
-            x_activated[:num_buoys] = F.softplus(
-                x[:num_buoys])  # radius, positive
-            x_activated[num_buoys:] = F.relu(
-                x[num_buoys:])  # strength, non-negative
-        return x_activated
+        return x  # strength, non-negative
 
 
 class DDPGAgent:
@@ -195,9 +183,6 @@ class DDPGAgent:
         mu = self.actor.forward(observation).cpu().detach().numpy()
         if enable_noise:
             mu += self.noise()
-            num_buoys = len(mu) // 2
-            mu[:num_buoys] = np.clip(mu[:num_buoys], 1e-9, None)
-            mu[num_buoys:] = np.clip(mu[num_buoys:], 0.0, None)
         self.actor.train()
         return mu
 

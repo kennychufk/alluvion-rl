@@ -291,7 +291,7 @@ while True:
             dp.coat(truth_buoy_pile_real.x).get())
         dp.coat(solver.usher.sample_x).set(truth_buoy_x_np)  # TODO: redundant?
 
-        act_aggregated = agent.get_action(obs, enable_noise=False)
+        act_aggregated = agent.get_action(obs, enable_noise=True)
         if np.sum(np.isnan(act_aggregated)) > 0:
             print(obs, act_aggregated)
             sys.exit(0)

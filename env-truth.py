@@ -11,6 +11,7 @@ from util import Unit, FluidSample, get_timestamp_and_hash
 parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--initial', type=str, default='')
 parser.add_argument('--output-dir', type=str, default='.')
+parser.add_argument('--write-visual', type=bool, default=False)
 args = parser.parse_args()
 dp = al.Depot(np.float32)
 cn = dp.cn
@@ -296,7 +297,7 @@ while generating_initial or solver.t < target_t:
                     unit.to_real_length(1), unit.to_real_velocity(1),
                     unit.to_real_angular_velocity(1))
                 next_truth_frame_id += 1
-            if solver.t >= unit.from_real_time(
+            if args.write_visual and solver.t >= unit.from_real_time(
                     next_visual_frame_id * visual_real_interval):
                 visual_x_scaled.set_from(solver.particle_x)
                 visual_x_scaled.scale(unit.to_real_length(1))
