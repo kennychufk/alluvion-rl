@@ -305,6 +305,8 @@ config.soft_update_rate = agent.soft_update_rate
 config.gamma = agent.gamma
 config.replay_size = agent.replay_size
 config.final_layer_scale = agent.final_layer_scale
+config.sigma = agent.noise.sigma
+config.theta = agent.noise.theta
 config.seed = args.seed
 
 wandb.watch(agent.critic)

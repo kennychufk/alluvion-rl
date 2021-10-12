@@ -9,7 +9,7 @@ import numpy as np
 
 
 class OrnsteinUhlenbeckProcess:
-    def __init__(self, size, mu=0.0, sigma=1e-3, theta=0.15, dt=1e-2):
+    def __init__(self, size, mu=0.0, sigma=0.2, theta=0.15, dt=1e-2):
         self.theta = theta
         self.mu = mu
         self.sigma = sigma
@@ -133,6 +133,8 @@ class DDPGAgent:
                  hidden_sizes,
                  soft_update_rate,
                  gamma=0.99,
+                 sigma=0.2,
+                 theta=0.15,
                  replay_size=1000000,
                  final_layer_scale=3e-3,
                  batch_size=64):
@@ -167,7 +169,9 @@ class DDPGAgent:
                                           final_layer_scale)
         self.target_critic.to(torch.device('cuda'))
 
-        self.noise = OrnsteinUhlenbeckProcess(act_dim, sigma=1e-4)
+        self.noise = OrnsteinUhlenbeckProcess(act_dim,
+                                              sigma=sigma,
+                                              theta=theta)
 
         DDPGAgent.hard_update(self.target_actor, self.actor)
         DDPGAgent.hard_update(self.target_critic, self.critic)
