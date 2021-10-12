@@ -9,6 +9,7 @@ class FluidSample:
 
         self.sample_x = dp.create_coated((self.num_samples), 3)
         self.sample_data3 = dp.create_coated((self.num_samples), 3)
+        self.sample_vort = dp.create_coated((self.num_samples), 3)
         self.sample_data1 = dp.create_coated((self.num_samples), 1)
         self.sample_boundary = dp.create_coated(
             (dp.cni.num_boundaries, self.num_samples), 4)
@@ -27,6 +28,7 @@ class FluidSample:
     def destroy_variables(self):
         self.dp.remove(self.sample_x)
         self.dp.remove(self.sample_data3)
+        self.dp.remove(self.sample_vort)
         self.dp.remove(self.sample_data1)
         self.dp.remove(self.sample_boundary)
         self.dp.remove(self.sample_boundary_kernel)
@@ -79,3 +81,13 @@ class FluidSample:
             self.sample_boundary_kernel, solver.pile.x_device,
             solver.pile.v_device, solver.pile.omega_device, self.num_samples)
         return self.sample_data3
+
+    def sample_vorticity(self, runner, solver):
+        runner.launch_sample_vorticity(
+            self.sample_x, solver.particle_x, solver.particle_density,
+            solver.particle_v, self.sample_neighbors,
+            self.sample_num_neighbors, self.sample_data3, self.sample_vort,
+            self.sample_boundary, self.sample_boundary_kernel,
+            solver.pile.x_device, solver.pile.v_device,
+            solver.pile.omega_device, self.num_samples)
+        return self.sample_vort

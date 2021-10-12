@@ -27,31 +27,94 @@ random.seed(args.seed)
 torch.manual_seed(args.seed)
 
 
-# TODO: distance to boundary, normal to boundary
 # using real unit except density: which is relative to density0
-def make_obs(dp, unit, truth_buoy_pile_real, usher, num_buoys):
+def make_obs(dp, unit, truth_buoy_pile_real, usher_sampling, num_buoys):
     obs_aggregated = np.zeros([num_buoys, agent.obs_dim], dp.default_dtype)
+    buoy_x_real = dp.coat(truth_buoy_pile_real.x).get()
+    buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()
+    buoy_q = dp.coat(truth_buoy_pile_real.q).get()
+
+    sample_v_real = unit.to_real_velocity(usher_sampling.sample_data3.get())
+    sample_density_relative = usher_sampling.sample_data1.get()
+    sample_vort_real = unit.to_real_angular_velocity(
+        usher_sampling.sample_vort.get())
+    sample_container_kernel_sim = usher_sampling.sample_boundary_kernel.get(
+    )[0]
+    sample_container_kernel_vol_grad_real = unit.to_real_per_length(
+        sample_container_kernel_sim[:, :3])
+    sample_container_kernel_vol = sample_container_kernel_sim[:,
+                                                              3]  # dimensionless
+
     for buoy_id in range(num_buoys):
+        xi = buoy_x_real[buoy_id]
+        vi = buoy_v_real[buoy_id]
+        xij = xi - buoy_x_real
+        d2 = np.sum(xij * xij, axis=1)
+        dist_sort_index = np.argsort(d2)[1:]
+
         obs_aggregated[buoy_id] = np.concatenate(
-            (dp.coat(truth_buoy_pile_real.x).get()[buoy_id].flatten(),
-             dp.coat(truth_buoy_pile_real.v).get()[buoy_id].flatten(),
-             dp.coat(truth_buoy_pile_real.q).get()[buoy_id].flatten(),
-             unit.to_real_velocity(dp.coat(
-                 usher.sample_v).get())[buoy_id].flatten(),
-             dp.coat(usher.sample_density).get()[buoy_id].flatten()),
+            (xi, buoy_v_real[buoy_id], buoy_q[buoy_id],
+             xij[dist_sort_index[0]], vi - buoy_v_real[dist_sort_index[0]],
+             xij[dist_sort_index[1]], vi - buoy_v_real[dist_sort_index[1]],
+             sample_v_real[buoy_id].flatten(),
+             sample_density_relative[buoy_id],
+             sample_vort_real[buoy_id].flatten(),
+             sample_container_kernel_vol_grad_real[buoy_id].flatten(),
+             sample_container_kernel_vol[buoy_id].flatten()),
             axis=None)
     return obs_aggregated
 
 
 def set_usher_param(usher, dp, unit, truth_buoy_pile_real, act_aggregated):
-    # TODO: drive_x, drive_v can be different from buoy
-    dp.coat(usher.drive_x).set(
-        unit.from_real_length(dp.coat(truth_buoy_pile_real.x).get()))
-    dp.coat(usher.drive_v).set(
-        unit.from_real_velocity(dp.coat(truth_buoy_pile_real.v).get()))
+    # [0:3] [3:6] [6:9] displacement from buoy x
+    # [9:12] [12:15] [15:18] velocity offset from buoy v
+    # [18] focal dist
+    # [19] usher kernel radius
+    # [20] strength
+    xoffset_real = np.zeros((3, num_buoys, 3), dp.default_dtype)
+    voffset_real = np.zeros((3, num_buoys, 3), dp.default_dtype)
+    # xoffset_real = act_aggregated[:, 0:9].reshape(3, num_buoys,  3);
+    # voffset_real = act_aggregated[:, 9:18].reshape(3, num_buoys,  3);
+    # print(xoffset_real, voffset_real)
+    buoy_x_real = dp.coat(truth_buoy_pile_real.x).get()
+    buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()
+    focal_x_real = np.zeros_like(xoffset_real)
+    focal_v_real = np.zeros_like(voffset_real)
+    for buoy_id in range(num_buoys):
+        focal_x_real[:,
+                     buoy_id] = xoffset_real[:, buoy_id] + buoy_x_real[buoy_id]
+        focal_v_real[:,
+                     buoy_id] = voffset_real[:, buoy_id] + buoy_v_real[buoy_id]
+
+    dp.coat(usher.focal_x).set(unit.from_real_length(focal_x_real))
+    dp.coat(usher.focal_v).set(unit.from_real_velocity(focal_v_real))
+
+    dp.coat(usher.focal_dist).set(np.ones(num_buoys, dp.default_dtype) * 6)
+    # dp.coat(usher.focal_dist).set(unit.from_real_length(act_aggregated[:, 0]))
+
+    # print(act_aggregated.flatten(), unit.from_real_length(act_aggregated.flatten()))
+    # dp.coat(usher.usher_kernel_radius).set(unit.from_real_length(act_aggregated.flatten()))
+    dp.coat(usher.usher_kernel_radius).set(
+        np.ones(num_buoys, dp.default_dtype) * 2)
+    # dp.coat(usher.usher_kernel_radius).set(unit.from_real_length(act_aggregated[:, 0]))
+
+    # print(act_aggregated.flatten(), unit.from_real_angular_velocity(act_aggregated.flatten()))
+    # dp.coat(usher.drive_strength).set(unit.from_real_angular_velocity(act_aggregated.flatten()))
+    # dp.coat(usher.drive_strength).set(np.ones(num_buoys, dp.default_dtype) * 2)
     dp.coat(usher.drive_strength).set(
-        unit.from_real_angular_velocity(act_aggregated.flatten()))
-    # print(dp.coat(usher.drive_kernel_radius).get(),dp.coat(usher.drive_strength).get())
+        unit.from_real_angular_velocity(act_aggregated[:, 0]))
+
+    # print('buoy_x_real', buoy_x_real)
+    # print('xoffset_real', xoffset_real)
+    # print('focal_x', dp.coat(usher.focal_x).get())
+
+    # print('buoy_v_real', buoy_v_real)
+    # print('voffset_real', voffset_real)
+    # print('focal_v', dp.coat(usher.focal_v).get())
+
+    # print('focal_dist', dp.coat(usher.focal_dist).get())
+    # print('usher_kernel_radius', dp.coat(usher.usher_kernel_radius).get())
+    # print('drive_strength', dp.coat(usher.drive_strength).get())
 
 
 dp = al.Depot(np.float32)
@@ -145,6 +208,8 @@ solver = dp.SolverI(runner,
                     graphical=True)
 particle_normalized_attr = dp.create_graphical((num_particles), 1)
 
+usher_sampling = FluidSample(dp, np.zeros((num_buoys, 3), dp.default_dtype))
+
 solver.num_particles = num_particles
 solver.max_dt = unit.from_real_time(0.05 * unit.rl)
 solver.initial_dt = solver.max_dt
@@ -219,13 +284,15 @@ agent = DDPGAgent(
     actor_lr=1e-5,
     critic_lr=1e-4,
     critic_weight_decay=1e-2,
-    obs_dim=14,
+    obs_dim=33,
+    # act_dim=21,
     act_dim=1,
+    gamma=0.99,
     # hidden_sizes=[2048, 1800],
     hidden_sizes=[2048, 4192, 4192, 1800],
     soft_update_rate=0.001,
     batch_size=64,
-    final_layer_scale=1e-5)
+    final_layer_scale=0.25)
 wandb.init(project='alluvion-rl')
 config = wandb.config
 config.actor_lr = agent.actor_lr
@@ -266,19 +333,20 @@ while True:
     # set positions for sampling around buoys in simulation
     truth_buoy_x_np = unit.from_real_length(
         dp.coat(truth_buoy_pile_real.x).get())
-    dp.coat(solver.usher.sample_x).set(truth_buoy_x_np)
-    solver.sample_usher()
+    usher_sampling.sample_x.set(truth_buoy_x_np)
+    usher_sampling.prepare_neighbor_and_boundary(runner, solver)
+    usher_sampling.sample_density(runner)
+    usher_sampling.sample_velocity(runner, solver)
+    usher_sampling.sample_vorticity(runner, solver)
 
-    obs_aggregated = make_obs(dp, unit, truth_buoy_pile_real, solver.usher,
+    obs_aggregated = make_obs(dp, unit, truth_buoy_pile_real, usher_sampling,
                               num_buoys)
 
     dp.unmap_graphical_pointers()
-    # clear usher
-    dp.coat(solver.usher.drive_kernel_radius).set(
-        np.ones(num_buoys, dp.default_dtype) * 2)
-    initial_strength = np.zeros(num_buoys, dp.default_dtype)
-    set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
-                    initial_strength)
+    # # clear usher
+    # initial_strength = np.zeros(num_buoys, dp.default_dtype)
+    # set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
+    #                 initial_strength)
 
     score = 0
     do_nothing_score = 0
@@ -293,9 +361,8 @@ while True:
                                        num_buoys, 0, 1)
         truth_buoy_x_np = unit.from_real_length(
             dp.coat(truth_buoy_pile_real.x).get())
-        dp.coat(solver.usher.sample_x).set(truth_buoy_x_np)  # TODO: redundant?
+        usher_sampling.sample_x.set(truth_buoy_x_np)
 
-        act_aggregated = np.zeros([num_buoys], dp.default_dtype)
         act_aggregated = agent.get_action(obs_aggregated, enable_noise=True)
         if np.sum(np.isnan(act_aggregated)) > 0:
             print(obs_aggregated, act_aggregated)
@@ -308,10 +375,12 @@ while True:
         # print(frame_id)
         truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id+1}.pile',
                                        num_buoys, 0, 1)
-        solver.update_particle_neighbors()
-        solver.sample_usher()
+        usher_sampling.prepare_neighbor_and_boundary(runner, solver)
+        usher_sampling.sample_density(runner)
+        usher_sampling.sample_velocity(runner, solver)
+        usher_sampling.sample_vorticity(runner, solver)
         new_obs_aggregated = make_obs(dp, unit, truth_buoy_pile_real,
-                                      solver.usher, num_buoys)
+                                      usher_sampling, num_buoys)
 
         # find reward
         sampling.prepare_neighbor_and_boundary(runner, solver)
