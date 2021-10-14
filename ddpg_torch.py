@@ -9,23 +9,32 @@ import numpy as np
 
 
 class OrnsteinUhlenbeckProcess:
-    def __init__(self, size, mu=0.0, sigma=0.2, theta=0.15, dt=1e-2):
+    def __init__(self, mu=0.0, sigma=0.2, theta=0.15, dt=1e-2):
         self.theta = theta
         self.mu = mu
         self.sigma = sigma
         self.dt = dt
-        self.size = size
-        self.reset()
 
-    def __call__(self):
+    def __call__(self, act_dim):
         x = self.x_prev + self.theta * (
             self.mu - self.x_prev) * self.dt + self.sigma * np.sqrt(
-                self.dt) * np.random.normal(size=self.size)
+                self.dt) * np.random.normal(size=act_dim)
         self.x_prev = x
         return x
 
-    def reset(self):
-        self.x_prev = np.random.normal(self.mu, self.sigma, self.size)
+    def reset(self, act_dim):
+        self.x_prev = np.random.normal(self.mu, self.sigma, act_dim)
+
+
+class GaussianNoise:
+    def __init__(self, std_dev=0.1):
+        self.std_dev = std_dev
+
+    def __call__(self, act_dim):
+        return np.random.normal(0, self.std_dev, size=act_dim)
+
+    def reset(self, act_dim):
+        pass
 
 
 class ReplayBuffer:
@@ -63,9 +72,9 @@ class ReplayBuffer:
         ]
 
 
-class MLPQFunction(nn.Module):
+class MLPCritic(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
-        super(MLPQFunction, self).__init__()
+        super(MLPCritic, self).__init__()
 
         obs_net_elements = []
         obs_net_sizes = [obs_dim] + list(hidden_sizes)[:-1]
@@ -100,9 +109,11 @@ class MLPQFunction(nn.Module):
 
 
 class MLPActor(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, max_action,
+                 final_layer_scale):
         super(MLPActor, self).__init__()
         self.act_dim = act_dim
+        self.max_action = max_action
         elements = []
         layer_sizes = [obs_dim] + list(hidden_sizes) + [act_dim]
         for i in range(len(layer_sizes) - 1):
@@ -110,17 +121,18 @@ class MLPActor(nn.Module):
             if i < len(layer_sizes) - 2:
                 elements.append(nn.LayerNorm(layer_sizes[i + 1]))
                 elements.append(nn.ReLU())
+            else:
+                elements.append(nn.Tanh())
         self.net = nn.Sequential(*elements)
 
         final_layer = [
             m for m in self.net.modules() if not isinstance(m, nn.Sequential)
-        ][-1]
+        ][-2]
         final_layer.weight.data.mul_(final_layer_scale)
         final_layer.bias.data.mul_(final_layer_scale)
 
     def forward(self, state):
-        x = self.net(state)
-        return x  # strength, non-negative
+        return self.max_action * self.net(state)
 
 
 class DDPGAgent:
@@ -131,50 +143,59 @@ class DDPGAgent:
                  obs_dim,
                  act_dim,
                  hidden_sizes,
+                 expl_noise_func,
                  soft_update_rate,
+                 max_action=1,
                  gamma=0.99,
                  sigma=0.2,
                  theta=0.15,
                  replay_size=1000000,
-                 final_layer_scale=3e-3,
+                 actor_final_scale=0.051961524,
+                 critic_final_scale=0.005196152,
+                 learn_after=0,
                  batch_size=64):
         self.gamma = gamma
         self.soft_update_rate = soft_update_rate
         self.replay_size = replay_size
         self.batch_size = batch_size
+        self.learn_after = learn_after
         self.actor_lr = actor_lr
         self.critic_lr = critic_lr
         self.critic_weight_decay = critic_weight_decay
         self.obs_dim = obs_dim
         self.act_dim = act_dim
         self.hidden_sizes = hidden_sizes
-        self.final_layer_scale = final_layer_scale
+        self.actor_final_scale = actor_final_scale
+        self.critic_final_scale = critic_final_scale
         self.memory = ReplayBuffer(replay_size, obs_dim, act_dim)
 
-        self.actor = MLPActor(obs_dim, act_dim, hidden_sizes,
-                              final_layer_scale)
+        self.actor = MLPActor(obs_dim, act_dim, hidden_sizes, max_action,
+                              actor_final_scale)
         self.actor.to(torch.device('cuda'))
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)
-        self.critic = MLPQFunction(obs_dim, act_dim, hidden_sizes,
-                                   final_layer_scale)
+        self.critic = MLPCritic(obs_dim, act_dim, hidden_sizes,
+                                critic_final_scale)
         self.critic.to(torch.device('cuda'))
         self.critic_optimizer = optim.Adam(self.critic.parameters(),
                                            lr=critic_lr,
                                            weight_decay=critic_weight_decay)
 
         self.target_actor = MLPActor(obs_dim, act_dim, hidden_sizes,
-                                     final_layer_scale)
+                                     max_action, actor_final_scale)
         self.target_actor.to(torch.device('cuda'))
-        self.target_critic = MLPQFunction(obs_dim, act_dim, hidden_sizes,
-                                          final_layer_scale)
+        self.target_critic = MLPCritic(obs_dim, act_dim, hidden_sizes,
+                                       critic_final_scale)
         self.target_critic.to(torch.device('cuda'))
 
-        self.noise = OrnsteinUhlenbeckProcess(act_dim,
-                                              sigma=sigma,
-                                              theta=theta)
+        self.expl_noise_func = expl_noise_func
+        self.expl_noise_func.reset(act_dim)
 
         DDPGAgent.hard_update(self.target_actor, self.actor)
         DDPGAgent.hard_update(self.target_critic, self.critic)
+
+    def uniform_random_action(self):
+        return np.random.uniform(-self.actor.max_action, self.actor.max_action,
+                                 self.act_dim)
 
     def get_action(self, observation, enable_noise=True):
         self.actor.eval()
@@ -182,7 +203,8 @@ class DDPGAgent:
                                    dtype=torch.float).to(torch.device('cuda'))
         mu = self.actor.forward(observation).cpu().detach().numpy()
         if enable_noise:
-            mu += self.noise()
+            mu += self.expl_noise_func(self.act_dim) * self.actor.max_action
+            np.clip(mu, -self.actor.max_action, self.actor.max_action, out=mu)
         self.actor.train()
         return mu
 
@@ -190,7 +212,7 @@ class DDPGAgent:
         self.memory.store(obs0, act, rew, obs1, done)
 
     def learn(self):
-        if len(self.memory) < self.batch_size:
+        if len(self.memory) < max(self.batch_size, self.learn_after):
             return
         state, action, reward, new_state, term = self.memory.sample_buffer(
             self.batch_size)
