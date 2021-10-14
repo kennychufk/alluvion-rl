@@ -75,6 +75,27 @@ class ReplayBuffer:
 class MLPCritic(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
         super(MLPCritic, self).__init__()
+        elements = []
+        layer_sizes = [obs_dim+act_dim] + list(hidden_sizes) + [1]
+        for i in range(len(layer_sizes) - 1):
+            elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            if i < len(layer_sizes) - 2:
+                elements.append(nn.LayerNorm(layer_sizes[i + 1]))
+                elements.append(nn.ReLU())
+        self.net = nn.Sequential(*elements)
+
+        final_layer = [
+            m for m in self.net.modules() if not isinstance(m, nn.Sequential)
+        ][-1]
+        final_layer.weight.data.mul_(final_layer_scale)
+        final_layer.bias.data.mul_(final_layer_scale)
+
+    def forward(self, obs, act):
+        return self.net(torch.cat([obs, act], 1))
+
+class MLPCriticMixAction(nn.Module):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
+        super(MLPCritic, self).__init__()
 
         obs_net_elements = []
         obs_net_sizes = [obs_dim] + list(hidden_sizes)[:-1]
