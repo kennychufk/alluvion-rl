@@ -76,7 +76,7 @@ class MLPCritic(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
         super(MLPCritic, self).__init__()
         elements = []
-        layer_sizes = [obs_dim+act_dim] + list(hidden_sizes) + [1]
+        layer_sizes = [obs_dim + act_dim] + list(hidden_sizes) + [1]
         for i in range(len(layer_sizes) - 1):
             elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 2:
@@ -93,9 +93,44 @@ class MLPCritic(nn.Module):
     def forward(self, obs, act):
         return self.net(torch.cat([obs, act], 1))
 
+
+class MLPTwinCritic(nn.Module):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
+        super(MLPTwinCritic, self).__init__()
+        elements = []
+        layer_sizes = [obs_dim + act_dim] + list(hidden_sizes) + [1]
+        for i in range(len(layer_sizes) - 1):
+            elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            if i < len(layer_sizes) - 2:
+                elements.append(nn.LayerNorm(layer_sizes[i + 1]))
+                elements.append(nn.ReLU())
+        self.net0 = nn.Sequential(*elements)
+        self.net1 = nn.Sequential(*elements)
+
+        final_layer0 = [
+            m for m in self.net0.modules() if not isinstance(m, nn.Sequential)
+        ][-1]
+        final_layer0.weight.data.mul_(final_layer_scale)
+        final_layer0.bias.data.mul_(final_layer_scale)
+
+        final_layer1 = [
+            m for m in self.net1.modules() if not isinstance(m, nn.Sequential)
+        ][-1]
+        final_layer1.weight.data.mul_(final_layer_scale)
+        final_layer1.bias.data.mul_(final_layer_scale)
+
+    def forward(self, obs, act):
+        sa = torch.cat([obs, act], 1)
+        return self.net0(sa), self.net1(sa)
+
+    def q0(self, obs, act):
+        sa = torch.cat([obs, act], 1)
+        return self.net0(sa)
+
+
 class MLPCriticMixAction(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
-        super(MLPCritic, self).__init__()
+        super(MLPCriticMixAction, self).__init__()
 
         obs_net_elements = []
         obs_net_sizes = [obs_dim] + list(hidden_sizes)[:-1]
@@ -130,11 +165,14 @@ class MLPCriticMixAction(nn.Module):
 
 
 class MLPActor(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_sizes, max_action,
+    def __init__(self, obs_dim, act_dim, hidden_sizes, min_action, max_action,
                  final_layer_scale):
         super(MLPActor, self).__init__()
         self.act_dim = act_dim
+        self.min_action = min_action
         self.max_action = max_action
+        self.action_half_extent = (max_action - min_action) * 0.5
+        self.action_mean = (max_action + min_action) * 0.5
         elements = []
         layer_sizes = [obs_dim] + list(hidden_sizes) + [act_dim]
         for i in range(len(layer_sizes) - 1):
@@ -153,7 +191,186 @@ class MLPActor(nn.Module):
         final_layer.bias.data.mul_(final_layer_scale)
 
     def forward(self, state):
-        return self.max_action * self.net(state)
+        x = self.net(state)
+        return torch.Tensor(self.action_half_extent).to(
+            x.get_device()) * x + torch.Tensor(self.action_mean).to(
+                x.get_device())
+
+
+class TD3:
+    def __init__(self,
+                 actor_lr,
+                 critic_lr,
+                 critic_weight_decay,
+                 obs_dim,
+                 act_dim,
+                 hidden_sizes,
+                 expl_noise_func,
+                 soft_update_rate,
+                 min_action,
+                 max_action,
+                 gamma=0.99,
+                 replay_size=1000000,
+                 policy_noise=0.2,
+                 noise_clip=0.5,
+                 policy_update_freq=2,
+                 actor_final_scale=0.051961524,
+                 critic_final_scale=0.005196152,
+                 learn_after=0,
+                 batch_size=64):
+        self.gamma = gamma
+        self.soft_update_rate = soft_update_rate
+        self.replay_size = replay_size
+        self.batch_size = batch_size
+        self.learn_after = learn_after
+        self.actor_lr = actor_lr
+        self.critic_lr = critic_lr
+        self.critic_weight_decay = critic_weight_decay
+        self.obs_dim = obs_dim
+        self.act_dim = act_dim
+        self.hidden_sizes = hidden_sizes
+        self.policy_noise = policy_noise
+        self.noise_clip = noise_clip
+        self.policy_update_freq = policy_update_freq
+        self.actor_final_scale = actor_final_scale
+        self.critic_final_scale = critic_final_scale
+        self.memory = ReplayBuffer(replay_size, obs_dim, act_dim)
+        self.train_step = 0
+
+        self.actor = MLPActor(obs_dim, act_dim, hidden_sizes, min_action,
+                              max_action, actor_final_scale)
+        self.actor.to(torch.device('cuda'))
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)
+        self.critic = MLPTwinCritic(obs_dim, act_dim, hidden_sizes,
+                                    critic_final_scale)
+        self.critic.to(torch.device('cuda'))
+        self.critic_optimizer = optim.Adam(self.critic.parameters(),
+                                           lr=critic_lr,
+                                           weight_decay=critic_weight_decay)
+
+        self.target_actor = MLPActor(obs_dim, act_dim, hidden_sizes,
+                                     min_action, max_action, actor_final_scale)
+        self.target_actor.to(torch.device('cuda'))
+        self.target_critic = MLPTwinCritic(obs_dim, act_dim, hidden_sizes,
+                                           critic_final_scale)
+        self.target_critic.to(torch.device('cuda'))
+
+        self.expl_noise_func = expl_noise_func
+        self.expl_noise_func.reset(act_dim)
+
+        DDPGAgent.hard_update(self.target_actor, self.actor)
+        DDPGAgent.hard_update(self.target_critic, self.critic)
+
+    def uniform_random_action(self):
+        return np.random.uniform(self.actor.min_action, self.actor.max_action,
+                                 self.act_dim)
+
+    def get_action(self, observation, enable_noise=True):
+        self.actor.eval()
+        observation = torch.tensor(observation,
+                                   dtype=torch.float).to(torch.device('cuda'))
+        mu = self.actor.forward(observation).cpu().detach().numpy()
+        if enable_noise:
+            mu += self.expl_noise_func(
+                self.act_dim
+            ) * self.actor.action_half_extent + self.actor.action_mean
+            np.clip(mu, self.actor.min_action, self.actor.max_action, out=mu)
+        self.actor.train()
+        return mu
+
+    def remember(self, obs0, act, rew, obs1, done):
+        self.memory.store(obs0, act, rew, obs1, done)
+
+    def learn(self):
+        self.train_step += 1
+        if len(self.memory) < max(self.batch_size, self.learn_after):
+            return
+        state, action, reward, new_state, term = self.memory.sample_buffer(
+            self.batch_size)
+
+        # Optimize critic
+        self.target_actor.eval()
+        self.target_critic.eval()
+        with torch.no_grad():
+            noise = (torch.randn_like(action) * self.policy_noise).clamp(
+                -self.noise_clip, self.noise_clip)
+            new_action = (self.target_actor(new_state) + noise).clamp(
+                torch.Tensor(self.actor.min_action).to(action.get_device()),
+                torch.Tensor(self.actor.max_action).to(action.get_device()))
+
+            target_q0, target_q1 = self.target_critic(new_state, new_action)
+            target_q = torch.min(target_q0, target_q1)
+            # TODO: is view() redundant?
+            target_q = reward.view(
+                self.batch_size,
+                1) + self.gamma * term.view(self.batch_size, 1) * target_q
+
+        self.critic_optimizer.zero_grad()
+        current_q0, current_q1 = self.critic.forward(state, action)
+        critic_loss = F.mse_loss(target_q, current_q0) + F.mse_loss(
+            target_q, current_q1)
+        critic_loss.backward()
+        self.critic_optimizer.step()
+
+        # Optimize actor
+        if self.train_step % self.policy_update_freq == 0:
+            self.critic.eval()
+            for p in self.critic.parameters():
+                p.requires_grad = False
+
+            self.actor_optimizer.zero_grad()
+            mu = self.actor.forward(state)
+            # actor_loss = -self.critic.forward(state, mu)
+            actor_loss = -self.critic.q0(state, mu)
+            actor_loss = actor_loss.mean()
+            actor_loss.backward()
+            self.actor_optimizer.step()
+
+            self.critic.train()
+            for p in self.critic.parameters():
+                p.requires_grad = True
+
+            DDPGAgent.soft_update(self.target_actor, self.actor,
+                                  self.soft_update_rate)
+            DDPGAgent.soft_update(self.target_critic, self.critic,
+                                  self.soft_update_rate)
+
+    @staticmethod
+    def hard_update(dst_net, src_net):
+        src_state_dict = src_net.state_dict()
+        dst_state_dict = dst_net.state_dict()
+        with torch.no_grad():
+            for name, dst_param in dst_state_dict.items():
+                dst_param.copy_(src_state_dict[name])
+
+    @staticmethod
+    def soft_update(dst_net, src_net, tau):
+        src_state_dict = src_net.state_dict()
+        dst_state_dict = dst_net.state_dict()
+        with torch.no_grad():
+            for name, dst_param in dst_state_dict.items():
+                dst_param.mul_(1.0 - tau)
+                dst_param.add_(src_state_dict[name] * tau)
+
+    def save_models(self, parent_dir):
+        torch.save(self.actor.state_dict(),
+                   os.path.join(parent_dir, 'Actor_ddpg'))
+        torch.save(self.target_actor.state_dict(),
+                   os.path.join(parent_dir, 'TargetActor_ddpg'))
+        torch.save(self.critic.state_dict(),
+                   os.path.join(parent_dir, 'Critic_ddpg'))
+        torch.save(self.target_critic.state_dict(),
+                   os.path.join(parent_dir, 'TargetCritic_ddpg'))
+
+    def load_models(self, parent_dir):
+        self.actor.load_state_dict(
+            torch.load(os.path.join(parent_dir, 'Actor_ddpg')))
+        self.target_actor.load_state_dict(
+            torch.load(os.path.join(parent_dir, 'TargetActor_ddpg')))
+        self.critic.load_state_dict(
+            torch.load(os.path.join(parent_dir, 'Critic_ddpg')))
+        self.target_critic.load_state_dict(
+            torch.load(os.path.join(parent_dir, 'TargetCritic_ddpg')))
 
 
 class DDPGAgent:
@@ -166,10 +383,9 @@ class DDPGAgent:
                  hidden_sizes,
                  expl_noise_func,
                  soft_update_rate,
-                 max_action=1,
+                 min_action,
+                 max_action,
                  gamma=0.99,
-                 sigma=0.2,
-                 theta=0.15,
                  replay_size=1000000,
                  actor_final_scale=0.051961524,
                  critic_final_scale=0.005196152,
@@ -190,22 +406,22 @@ class DDPGAgent:
         self.critic_final_scale = critic_final_scale
         self.memory = ReplayBuffer(replay_size, obs_dim, act_dim)
 
-        self.actor = MLPActor(obs_dim, act_dim, hidden_sizes, max_action,
-                              actor_final_scale)
+        self.actor = MLPActor(obs_dim, act_dim, hidden_sizes, min_action,
+                              max_action, actor_final_scale)
         self.actor.to(torch.device('cuda'))
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)
-        self.critic = MLPCritic(obs_dim, act_dim, hidden_sizes,
-                                critic_final_scale)
+        self.critic = MLPCriticMixAction(obs_dim, act_dim, hidden_sizes,
+                                         critic_final_scale)
         self.critic.to(torch.device('cuda'))
         self.critic_optimizer = optim.Adam(self.critic.parameters(),
                                            lr=critic_lr,
                                            weight_decay=critic_weight_decay)
 
         self.target_actor = MLPActor(obs_dim, act_dim, hidden_sizes,
-                                     max_action, actor_final_scale)
+                                     min_action, max_action, actor_final_scale)
         self.target_actor.to(torch.device('cuda'))
-        self.target_critic = MLPCritic(obs_dim, act_dim, hidden_sizes,
-                                       critic_final_scale)
+        self.target_critic = MLPCriticMixAction(obs_dim, act_dim, hidden_sizes,
+                                                critic_final_scale)
         self.target_critic.to(torch.device('cuda'))
 
         self.expl_noise_func = expl_noise_func
@@ -215,7 +431,7 @@ class DDPGAgent:
         DDPGAgent.hard_update(self.target_critic, self.critic)
 
     def uniform_random_action(self):
-        return np.random.uniform(-self.actor.max_action, self.actor.max_action,
+        return np.random.uniform(self.actor.min_action, self.actor.max_action,
                                  self.act_dim)
 
     def get_action(self, observation, enable_noise=True):
@@ -224,8 +440,10 @@ class DDPGAgent:
                                    dtype=torch.float).to(torch.device('cuda'))
         mu = self.actor.forward(observation).cpu().detach().numpy()
         if enable_noise:
-            mu += self.expl_noise_func(self.act_dim) * self.actor.max_action
-            np.clip(mu, -self.actor.max_action, self.actor.max_action, out=mu)
+            mu += self.expl_noise_func(
+                self.act_dim
+            ) * self.actor.action_half_extent + self.actor.action_mean
+            np.clip(mu, self.actor.min_action, self.actor.max_action, out=mu)
         self.actor.train()
         return mu
 

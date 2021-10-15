@@ -12,7 +12,7 @@ from sklearn.metrics import mean_squared_error
 import wandb
 import torch
 
-from ddpg_torch import DDPGAgent
+from ddpg_torch import DDPGAgent, OrnsteinUhlenbeckProcess, TD3, GaussianNoise
 from util import Unit, FluidSample, get_timestamp_and_hash
 
 parser = argparse.ArgumentParser(description='RL playground')
@@ -92,17 +92,18 @@ def set_usher_param(usher, dp, unit, truth_buoy_pile_real, act_aggregated):
     dp.coat(usher.focal_dist).set(np.ones(num_buoys, dp.default_dtype) * 6)
     # dp.coat(usher.focal_dist).set(unit.from_real_length(act_aggregated[:, 0]))
 
-    # print(act_aggregated.flatten(), unit.from_real_length(act_aggregated.flatten()))
-    # dp.coat(usher.usher_kernel_radius).set(unit.from_real_length(act_aggregated.flatten()))
     dp.coat(usher.usher_kernel_radius).set(
         np.ones(num_buoys, dp.default_dtype) * 2)
-    # dp.coat(usher.usher_kernel_radius).set(unit.from_real_length(act_aggregated[:, 0]))
+    # dp.coat(usher.usher_kernel_radius).set(unit.from_real_length(np.ones(num_buoys, dp.default_dtype) * 0.04))
+    # dp.coat(usher.usher_kernel_radius).set(
+    #     unit.from_real_length(act_aggregated[:, 0]))
 
-    # print(act_aggregated.flatten(), unit.from_real_angular_velocity(act_aggregated.flatten()))
-    # dp.coat(usher.drive_strength).set(unit.from_real_angular_velocity(act_aggregated.flatten()))
     # dp.coat(usher.drive_strength).set(np.ones(num_buoys, dp.default_dtype) * 2)
+    # DEBUG
     dp.coat(usher.drive_strength).set(
         unit.from_real_angular_velocity(act_aggregated[:, 0]))
+    # dp.coat(usher.drive_strength).set(
+    #     unit.from_real_angular_velocity(np.ones_like(act_aggregated[:, 0]) * 100))
 
     # print('buoy_x_real', buoy_x_real)
     # print('xoffset_real', xoffset_real)
@@ -287,12 +288,16 @@ agent = DDPGAgent(
     obs_dim=33,
     # act_dim=21,
     act_dim=1,
-    gamma=0.99,
+    expl_noise_func=GaussianNoise(std_dev=0.0),
+    gamma=0.95,
     # hidden_sizes=[2048, 1800],
-    hidden_sizes=[2048, 4192, 4192, 1800],
+    min_action=np.array([-100]),
+    max_action=np.array([100]),
+    hidden_sizes=[400, 300],
+    actor_final_scale=0.25,
+    critic_final_scale=0.25,
     soft_update_rate=0.001,
-    batch_size=64,
-    final_layer_scale=0.25)
+    batch_size=64)
 wandb.init(project='alluvion-rl')
 config = wandb.config
 config.actor_lr = agent.actor_lr
@@ -301,12 +306,15 @@ config.critic_weight_decay = agent.critic_weight_decay
 config.obs_dim = agent.obs_dim
 config.act_dim = agent.act_dim
 config.hidden_sizes = agent.hidden_sizes
+config.max_action = agent.target_actor.max_action
 config.soft_update_rate = agent.soft_update_rate
 config.gamma = agent.gamma
 config.replay_size = agent.replay_size
-config.final_layer_scale = agent.final_layer_scale
-config.sigma = agent.noise.sigma
-config.theta = agent.noise.theta
+config.actor_final_scale = agent.actor_final_scale
+config.critic_final_scale = agent.critic_final_scale
+# config.sigma = agent.expl_noise_func.sigma
+# config.theta = agent.expl_noise_func.theta
+config.learn_after = agent.learn_after
 config.seed = args.seed
 
 wandb.watch(agent.critic)
@@ -366,6 +374,8 @@ while True:
         usher_sampling.sample_x.set(truth_buoy_x_np)
 
         act_aggregated = agent.get_action(obs_aggregated, enable_noise=True)
+        if frame_id % 100 == 0:
+            print(frame_id, act_aggregated)
         if np.sum(np.isnan(act_aggregated)) > 0:
             print(obs_aggregated, act_aggregated)
             sys.exit(0)
@@ -397,12 +407,17 @@ while True:
         reward = -mean_squared_error(simulation_v_real_np, truth_v_real_np)
         do_nothing_reward = -mean_squared_error(np.zeros_like(truth_v_real_np),
                                                 truth_v_real_np)
+        early_termination = False
+        if reward < do_nothing_reward * 10:
+            print(f'early termination {reward} {do_nothing_reward}')
+            early_termination = True
 
         for buoy_id in range(num_buoys):
-            agent.remember(obs_aggregated[buoy_id], act_aggregated[buoy_id],
-                           (reward - do_nothing_reward) * 100,
-                           new_obs_aggregated[buoy_id],
-                           int(frame_id == (num_frames - 2)))
+            agent.remember(
+                obs_aggregated[buoy_id], act_aggregated[buoy_id],
+                (reward - do_nothing_reward) * 100,
+                new_obs_aggregated[buoy_id],
+                int(early_termination or frame_id == (num_frames - 2)))
         agent.learn()
         score += reward
         do_nothing_score += do_nothing_reward
@@ -412,6 +427,8 @@ while True:
                          unit.from_real_velocity(0.02))
         dp.unmap_graphical_pointers()
         display_proxy.draw()
+        if early_termination:
+            break
     score_history.append(score)
 
     if episode_id % 50 == 0:

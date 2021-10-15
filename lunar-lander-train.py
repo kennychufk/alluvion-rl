@@ -7,7 +7,7 @@ import torch
 import gym
 import wandb
 
-from ddpg_torch import DDPGAgent, OrnsteinUhlenbeckProcess, GaussianNoise
+from ddpg_torch import DDPGAgent, TD3, OrnsteinUhlenbeckProcess, GaussianNoise
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=2021)
@@ -25,7 +25,8 @@ agent = DDPGAgent(actor_lr=1e-4,
                   critic_weight_decay=1e-2,
                   obs_dim=8,
                   act_dim=2,
-                  max_action=env.action_space.high[0],
+                  min_action=env.action_space.low,
+                  max_action=env.action_space.high,
                   expl_noise_func=OrnsteinUhlenbeckProcess(),
                   hidden_sizes=[400, 300],
                   soft_update_rate=0.001,
@@ -39,6 +40,7 @@ config.critic_weight_decay = agent.critic_weight_decay
 config.obs_dim = agent.obs_dim
 config.act_dim = agent.act_dim
 config.hidden_sizes = agent.hidden_sizes
+config.min_action = agent.target_actor.min_action
 config.max_action = agent.target_actor.max_action
 config.soft_update_rate = agent.soft_update_rate
 config.gamma = agent.gamma
