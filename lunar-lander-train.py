@@ -74,12 +74,12 @@ while True:
         new_state, reward, done, info = env.step(act)
         agent.remember(obs, act, reward, new_state, int(done))
         agent.learn()
+        sample_step += 1
         score += reward
         obs = new_state
         # env.render()
     score_history.append(score)
 
-    sample_step += 1
     if i % 50 == 0:
         agent.save_models(wandb.run.dir)
     wandb.log({'score': score, 'score100': np.mean(list(score_history))})

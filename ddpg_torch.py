@@ -57,6 +57,9 @@ class ReplayBuffer:
         self.rew[self.ptr] = rew
         self.obs1[self.ptr] = obs1
         self.term[self.ptr] = 1 - done
+        if (self.size % 1000 == 0):
+            print('obs', obs0, obs1)
+            print('act rew term', act, rew, self.term[self.ptr])
         self.ptr = (self.ptr + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
@@ -191,10 +194,10 @@ class MLPActor(nn.Module):
         final_layer.bias.data.mul_(final_layer_scale)
 
     def forward(self, state):
-        x = self.net(state)
-        return torch.Tensor(self.action_half_extent).to(
-            x.get_device()) * x + torch.Tensor(self.action_mean).to(
-                x.get_device())
+        return self.net(state)
+
+    def from_normalized_action(self, act):
+        return self.action_half_extent * act + self.action_mean
 
 
 class TD3:
@@ -262,8 +265,7 @@ class TD3:
         DDPGAgent.hard_update(self.target_critic, self.critic)
 
     def uniform_random_action(self):
-        return np.random.uniform(self.actor.min_action, self.actor.max_action,
-                                 self.act_dim)
+        return np.random.uniform(-1, 1, self.act_dim)
 
     def get_action(self, observation, enable_noise=True):
         self.actor.eval()
@@ -271,10 +273,8 @@ class TD3:
                                    dtype=torch.float).to(torch.device('cuda'))
         mu = self.actor.forward(observation).cpu().detach().numpy()
         if enable_noise:
-            mu += self.expl_noise_func(
-                self.act_dim
-            ) * self.actor.action_half_extent + self.actor.action_mean
-            np.clip(mu, self.actor.min_action, self.actor.max_action, out=mu)
+            mu += self.expl_noise_func(self.act_dim)
+            np.clip(mu, -1, 1, out=mu)
         self.actor.train()
         return mu
 
@@ -294,9 +294,7 @@ class TD3:
         with torch.no_grad():
             noise = (torch.randn_like(action) * self.policy_noise).clamp(
                 -self.noise_clip, self.noise_clip)
-            new_action = (self.target_actor(new_state) + noise).clamp(
-                torch.Tensor(self.actor.min_action).to(action.get_device()),
-                torch.Tensor(self.actor.max_action).to(action.get_device()))
+            new_action = (self.target_actor(new_state) + noise).clamp(-1, 1)
 
             target_q0, target_q1 = self.target_critic(new_state, new_action)
             target_q = torch.min(target_q0, target_q1)
@@ -431,8 +429,7 @@ class DDPGAgent:
         DDPGAgent.hard_update(self.target_critic, self.critic)
 
     def uniform_random_action(self):
-        return np.random.uniform(self.actor.min_action, self.actor.max_action,
-                                 self.act_dim)
+        return np.random.uniform(-1, 1, self.act_dim)
 
     def get_action(self, observation, enable_noise=True):
         self.actor.eval()
@@ -440,10 +437,8 @@ class DDPGAgent:
                                    dtype=torch.float).to(torch.device('cuda'))
         mu = self.actor.forward(observation).cpu().detach().numpy()
         if enable_noise:
-            mu += self.expl_noise_func(
-                self.act_dim
-            ) * self.actor.action_half_extent + self.actor.action_mean
-            np.clip(mu, self.actor.min_action, self.actor.max_action, out=mu)
+            mu += self.expl_noise_func(self.act_dim)
+            np.clip(mu, -1, 1, out=mu)
         self.actor.train()
         return mu
 

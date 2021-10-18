@@ -281,23 +281,24 @@ truth_buoy_pile_real = dp.Pile(dp, runner, 0)
 for i in range(num_buoys):
     truth_buoy_pile_real.add(dp.SphereDistance.create(0), al.uint3(64, 64, 64))
 
-agent = DDPGAgent(
-    actor_lr=1e-5,
-    critic_lr=1e-4,
-    critic_weight_decay=1e-2,
+agent = TD3(
+    actor_lr=3e-4,
+    critic_lr=3e-4,
+    critic_weight_decay=0,
     obs_dim=33,
     # act_dim=21,
     act_dim=1,
-    expl_noise_func=GaussianNoise(std_dev=0.0),
+    expl_noise_func=GaussianNoise(std_dev=0.1),
     gamma=0.95,
     # hidden_sizes=[2048, 1800],
-    min_action=np.array([-100]),
-    max_action=np.array([100]),
-    hidden_sizes=[400, 300],
-    actor_final_scale=0.25,
-    critic_final_scale=0.25,
-    soft_update_rate=0.001,
-    batch_size=64)
+    min_action=np.array([0]),
+    max_action=np.array([1000]),
+    learn_after=100000,
+    hidden_sizes=[600, 400],
+    actor_final_scale=1,
+    critic_final_scale=1,
+    soft_update_rate=0.005,
+    batch_size=256)
 wandb.init(project='alluvion-rl')
 config = wandb.config
 config.actor_lr = agent.actor_lr
@@ -321,6 +322,7 @@ wandb.watch(agent.critic)
 
 with open('switch', 'w') as f:
     f.write('1')
+sample_step = 0
 while True:
     with open('switch', 'r') as f:
         if f.read(1) == '0':
@@ -373,14 +375,19 @@ while True:
             dp.coat(truth_buoy_pile_real.x).get())
         usher_sampling.sample_x.set(truth_buoy_x_np)
 
-        act_aggregated = agent.get_action(obs_aggregated, enable_noise=True)
+        if sample_step < agent.learn_after:
+            act_aggregated = np.zeros((num_buoys, agent.act_dim))
+            for buoy_id in range(num_buoys):
+                act_aggregated[buoy_id] = agent.uniform_random_action()
+        else:
+            act_aggregated = agent.get_action(obs_aggregated)
         if frame_id % 100 == 0:
             print(frame_id, act_aggregated)
         if np.sum(np.isnan(act_aggregated)) > 0:
             print(obs_aggregated, act_aggregated)
             sys.exit(0)
         set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
-                        act_aggregated)
+                        agent.actor.from_normalized_action(act_aggregated))
         dp.map_graphical_pointers()
         while (solver.t < target_t):
             solver.step()
@@ -414,11 +421,12 @@ while True:
 
         for buoy_id in range(num_buoys):
             agent.remember(
-                obs_aggregated[buoy_id], act_aggregated[buoy_id],
-                (reward - do_nothing_reward) * 100,
+                obs_aggregated[buoy_id], act_aggregated[buoy_id], reward * 10,
                 new_obs_aggregated[buoy_id],
                 int(early_termination or frame_id == (num_frames - 2)))
-        agent.learn()
+        if sample_step >= agent.learn_after:  # as memory size is num_buoys * sample_step
+            agent.learn()
+        sample_step += 1
         score += reward
         do_nothing_score += do_nothing_reward
         obs_aggregated = new_obs_aggregated
