@@ -70,9 +70,9 @@ pile.add(cylinder_distance,
          restitution=0,
          friction=0,
          inertia_tensor=dp.f3(7.91134e-8, 2.94462e-9, 7.91134e-8),
-         x=dp.f3(
-             0, 30e-3, 0.0),
-         q=dp.f4(np.sqrt(2)*0.5, 0, 0, np.sqrt(2)*0.5),
+         x=dp.f3(0, 30e-3, 0.0),
+         q=dp.f4(np.sqrt(2) * 0.5, 0, 0,
+                 np.sqrt(2) * 0.5),
          display_mesh=cylinder_mesh)
 
 cylinder_density = cylinder_mass / (cylinder_radius * cylinder_radius * np.pi *
@@ -97,8 +97,14 @@ cni.grid_offset = grid_offset
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
-solver = dp.SolverDf(runner, pile, dp, max_num_particles, grid_res,
-                     enable_surface_tension = False, enable_vorticity = False, graphical = True)
+solver = dp.SolverDf(runner,
+                     pile,
+                     dp,
+                     max_num_particles,
+                     grid_res,
+                     enable_surface_tension=False,
+                     enable_vorticity=False,
+                     graphical=True)
 particle_normalized_attr = dp.create_graphical((max_num_particles), 1)
 
 solver.dt = 1e-3
@@ -117,6 +123,7 @@ runner.launch_create_fluid_cylinder(256,
                                     solver.num_particles,
                                     offset=0,
                                     radius=container_radius,
+                                    particle_radius=particle_radius,
                                     y_min=fluid_y_range[0],
                                     y_max=fluid_y_range[1])
 dp.unmap_graphical_pointers()

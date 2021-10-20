@@ -152,6 +152,7 @@ dp.map_graphical_pointers()
 runner.launch_create_fluid_block(solver.particle_x,
                                  num_particles,
                                  offset=0,
+                                 particle_radius=particle_radius,
                                  mode=block_mode,
                                  box_min=box_min,
                                  box_max=box_max)

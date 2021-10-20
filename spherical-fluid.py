@@ -64,6 +64,7 @@ runner.launch_create_fluid_block(solver.particle_x,
                                  num_particles,
                                  offset=0,
                                  mode=0,
+                                 particle_radius=particle_radius,
                                  box_min=dp.f3(-half_box_extent,
                                                -half_box_extent,
                                                -half_box_extent),
@@ -100,7 +101,7 @@ for frame_id in range(1000):
     dp.map_graphical_pointers()
     for substep_id in range(1000):
         solver.step()
-        if substep_id%50 == 0:
+        if substep_id % 50 == 0:
             solver.particle_v.set_zero()
             solver.reset_solving_var()
     densities = dp.coat(solver.particle_density).get()

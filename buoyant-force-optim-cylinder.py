@@ -130,6 +130,7 @@ runner.launch_create_fluid_cylinder(solver.particle_x,
                                     solver.num_particles,
                                     offset=0,
                                     radius=container_radius,
+                                    particle_radius=particle_radius,
                                     y_min=fluid_y_range[0],
                                     y_max=fluid_y_range[1])
 dp.unmap_graphical_pointers()

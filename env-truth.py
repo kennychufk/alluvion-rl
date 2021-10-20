@@ -53,7 +53,6 @@ container_distance = dp.BoxDistance.create(container_dim, outset=0.46153312)
 pile.add(container_distance,
          al.uint3(64, 64, 64),
          sign=-1,
-         thickness=kernel_radius,
          collision_mesh=container_mesh,
          mass=0,
          restitution=0.8,
@@ -190,6 +189,7 @@ if generating_initial:
     runner.launch_create_fluid_block(solver.particle_x,
                                      solver.num_particles,
                                      offset=0,
+                                     particle_radius=particle_radius,
                                      mode=block_mode,
                                      box_min=box_min,
                                      box_max=box_max)
