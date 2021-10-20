@@ -231,6 +231,8 @@ def save_result(iteration, ground_truth, simulated, osampling, unit,
     cmap = plt.get_cmap("tab10")
     for acc_id, acc in enumerate(accelerations):
         ax = fig.add_subplot(num_rows, num_cols, acc_id + 1)
+        ax.set_title(f'a = {unit.to_real_acceleration(acc):.3e}ms-2')
+        ax.set_ylabel('v (m/s)')
         for t_id, t in enumerate(osampling.ts):
             ax.plot(unit.to_real_length(osampling.rs),
                     unit.to_real_velocity(ground_truth[acc_id][t_id]),
@@ -433,22 +435,20 @@ pile.reallocate_kinematics_on_device()
 cn.contact_tolerance = particle_radius
 
 # grid
-grid_res = al.uint3(int(pipe_radius_grid_span * 2),
-                    int(pipe_length_grid_half_span * 2),
-                    int(pipe_radius_grid_span * 2))
-grid_offset = al.int3(-pipe_radius_grid_span, -pipe_length_grid_half_span,
-                      -pipe_radius_grid_span)
-cni.grid_res = grid_res
-cni.grid_offset = grid_offset
+cni.grid_res = al.uint3(int(pipe_radius_grid_span * 2),
+                        int(pipe_length_grid_half_span * 2),
+                        int(pipe_radius_grid_span * 2))
+cni.grid_offset = al.int3(-pipe_radius_grid_span, -pipe_length_grid_half_span,
+                          -pipe_radius_grid_span)
+
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
-cn.set_wrap_length(grid_res.y * kernel_radius)
+cn.set_wrap_length(cni.grid_res.y * kernel_radius)
 
 solver = dp.SolverI(runner,
                     pile,
                     dp,
                     num_particles,
-                    grid_res,
                     enable_surface_tension=False,
                     enable_vorticity=False,
                     graphical=args.display)

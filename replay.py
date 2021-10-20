@@ -37,7 +37,6 @@ solver = dp.Solver(runner,
                    pile,
                    dp,
                    max_num_particles,
-                   grid_res,
                    enable_surface_tension=False,
                    enable_vorticity=False,
                    graphical=True)
