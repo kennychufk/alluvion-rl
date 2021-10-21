@@ -9,18 +9,18 @@ dp.create_display(800, 600, "", False)
 display_proxy = dp.get_display_proxy()
 runner = dp.Runner()
 
-scale_factor = 2**-11
+scale_factor = 1
 particle_radius = 0.25 * scale_factor
-density0 = 1000
+density0 = 1
 kernel_radius = particle_radius * 4
 cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radius
 volume_relative_to_cube = 0.8
 particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
-cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 cn.boundary_vol_factor = 1.0
+cn.gravity = dp.f3(0, 0, 1)
 
 current_radius = np.load(sys.argv[2])[0] * scale_factor
 pipe_radius_grid_span = int(np.ceil(current_radius / kernel_radius))
@@ -36,7 +36,6 @@ map_lateral_res = 64
 pile.add(dp.InfiniteCylinderDistance.create(current_radius),
          al.uint3(map_lateral_res, 1, map_lateral_res),
          sign=-1)
-pile.build_grids(kernel_radius)
 pile.reallocate_kinematics_on_device()
 
 cni.grid_res = al.uint3(pipe_radius_grid_span * 2,
@@ -52,18 +51,15 @@ solver = dp.SolverDf(runner,
                      pile,
                      dp,
                      num_particles,
-                     cni.grid_res,
                      enable_surface_tension=False,
                      enable_vorticity=False,
                      graphical=True)
 particle_normalized_attr = dp.create_graphical((num_particles), 1)
 solver.num_particles = num_particles
 solver.dt = 1e-3
-solver.max_dt = 1e-3
-solver.min_dt = 0.0
-solver.cfl = 2e-2
-solver.particle_radius = particle_radius
-dp.copy_cn()
+solver.max_dt = 1e-4
+solver.min_dt = 1e-5
+solver.cfl = 2e-3
 
 dp.map_graphical_pointers()
 solver.particle_x.read_file(sys.argv[1])
@@ -79,11 +75,27 @@ display_proxy.add_particle_shading_program(solver.particle_x,
                                            colormap_tex,
                                            solver.particle_radius, solver)
 
-pile.build_grids(kernel_radius)
 pile.reallocate_kinematics_on_device()
 
+num_iterations = 0
+
+with open('switch', 'w') as f:
+    f.write('1')
+vel_reset = False
 while True:
+    with open('switch', 'r') as f:
+        if f.read(1) == '0':
+            break
     dp.map_graphical_pointers()
+    with open('switch', 'r') as f:
+        if f.read(1) == 'r':
+            solver.particle_v.set_zero()
+            solver.reset_solving_var()
+            vel_reset = True
+    if vel_reset:
+        with open('switch', 'w') as f:
+            f.write('1')
+        vel_reset = False
     solver.step_wrap1()
     # solver.compute_all_boundaries()
     # solver.update_particle_neighbors_wrap1()
@@ -94,3 +106,9 @@ while True:
     solver.normalize(solver.particle_v, particle_normalized_attr, 0, 2)
     dp.unmap_graphical_pointers()
     display_proxy.draw()
+    num_iterations += 1
+
+dp.map_graphical_pointers()
+solver.particle_x.write_file(f".alcache/{solver.num_particles}-gravity.alu",
+                             solver.num_particles)
+dp.unmap_graphical_pointers()

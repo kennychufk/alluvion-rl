@@ -23,7 +23,6 @@ unit = Unit(real_kernel_radius=0.005,
             real_density0=1000,
             real_gravity=-9.80665)
 
-cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 cn.gravity = gravity
@@ -86,7 +85,6 @@ pile.add(dp.CylinderDistance.create(cylinder_radius - current_inset,
          q=dp.f4(0, 0, 0, 1),
          display_mesh=cylinder_mesh)
 
-pile.build_grids(2 * kernel_radius)
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
 cn.contact_tolerance = particle_radius
@@ -119,8 +117,6 @@ solver.initial_dt = solver.max_dt * 0.01
 solver.min_dt = 0
 solver.cfl = 0.02
 solver.num_particles = num_particles
-
-dp.copy_cn()
 
 dp.map_graphical_pointers()
 
@@ -192,7 +188,6 @@ while True:
                              x=pile.x[1],
                              q=dp.f4(0, 0, 0, 1),
                              display_mesh=cylinder_mesh)
-                pile.build_grids(2 * kernel_radius)
 
     if target_reached:
         if num_stabilized >= stabilization_target:

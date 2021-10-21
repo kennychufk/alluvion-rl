@@ -26,7 +26,6 @@ unit = Unit(real_kernel_radius=0.005,
             real_density0=1000,
             real_gravity=-9.80665)
 
-cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 cn.gravity = gravity
@@ -96,7 +95,6 @@ pile.add(dp.SphereDistance.create(sphere_radius),
 #                     q=dp.f4(np.sqrt(2), 0, 0, np.sqrt(2)),
 #                     display_mesh=bunny_mesh)
 
-pile.build_grids(2 * kernel_radius)
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
 cn.contact_tolerance = particle_radius
@@ -141,8 +139,6 @@ solver.initial_dt = solver.max_dt
 solver.min_dt = 0
 solver.cfl = 0.4
 # solver.density_error_tolerance = 1e-4
-
-dp.copy_cn()
 
 dp.map_graphical_pointers()
 runner.launch_create_fluid_block(solver.particle_x,

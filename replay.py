@@ -22,7 +22,6 @@ volume_relative_to_cube = 0.8
 particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 gravity = dp.f3(0, -9.81, 0)
 
-cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 
@@ -41,8 +40,6 @@ solver = dp.Solver(runner,
                    enable_vorticity=False,
                    graphical=True)
 particle_normalized_attr = dp.create_graphical((max_num_particles), 1)
-
-dp.copy_cn()
 
 display_proxy.set_camera(al.float3(0, 0.06, 0.4), al.float3(0, 0.06, 0))
 colormap_tex = display_proxy.create_colormap_viridis()

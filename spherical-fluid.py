@@ -16,7 +16,6 @@ cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radiu
 volume_relative_to_cube = 0.8
 particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
-cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 cn.boundary_vol_factor = 1.0
@@ -32,7 +31,6 @@ current_radius = side_length / 2
 pile.add(dp.SphereDistance.create(current_radius),
          al.uint3(32, 32, 32),
          sign=-1)
-pile.build_grids(kernel_radius)
 pile.reallocate_kinematics_on_device()
 
 grid_half_extent = int(half_box_extent / kernel_radius) + 1
@@ -56,7 +54,6 @@ solver.dt = 1e-3
 solver.max_dt = 1e-3
 solver.min_dt = 0.0
 solver.cfl = 2e-2
-dp.copy_cn()
 
 dp.map_graphical_pointers()
 runner.launch_create_fluid_block(solver.particle_x,
@@ -95,7 +92,6 @@ for frame_id in range(1000):
                  dp.SphereDistance.create(current_radius),
                  al.uint3(map_lateral_res, map_lateral_res, map_lateral_res),
                  sign=-1)
-    pile.build_grids(kernel_radius)
     pile.reallocate_kinematics_on_device()
     dp.map_graphical_pointers()
     for substep_id in range(1000):

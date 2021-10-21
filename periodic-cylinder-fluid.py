@@ -16,7 +16,6 @@ cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radiu
 volume_relative_to_cube = 0.8
 particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
-cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 
@@ -35,7 +34,6 @@ map_lateral_res = 32
 pile.add(dp.InfiniteCylinderDistance.create(current_radius),
          al.uint3(map_lateral_res, 1, map_lateral_res),
          sign=-1)
-pile.build_grids(kernel_radius)
 pile.reallocate_kinematics_on_device()
 
 cni.grid_res = al.uint3(pipe_radius_grid_span * 2,
@@ -61,7 +59,6 @@ solver.dt = 1e-3
 solver.max_dt = 1e-3
 solver.min_dt = 0.0
 solver.cfl = 2e-2
-dp.copy_cn()
 
 dp.map_graphical_pointers()
 runner.launch_create_fluid_cylinder(solver.particle_x,
@@ -94,7 +91,6 @@ while True:
                  dp.InfiniteCylinderDistance.create(current_radius),
                  al.uint3(map_lateral_res, 1, map_lateral_res),
                  sign=-1)
-    pile.build_grids(kernel_radius)
     pile.reallocate_kinematics_on_device()
 
     dp.map_graphical_pointers()

@@ -388,7 +388,6 @@ cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radiu
 volume_relative_to_cube = 0.8
 particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
-cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 
@@ -430,7 +429,6 @@ pile.add(dp.InfiniteCylinderDistance.create(pipe_model_radius),
          al.uint3(64, 1, 64),
          sign=-1)
 
-pile.build_grids(2 * kernel_radius)
 pile.reallocate_kinematics_on_device()
 cn.contact_tolerance = particle_radius
 
@@ -463,8 +461,6 @@ solver.cfl = 0.2
 # solver.density_change_tolerance = 1e-4
 # solver.density_error_tolerance = 1e-4
 
-dp.copy_cn()
-
 if args.display:
     display_proxy.set_camera(al.float3(0, 0, pipe_radius * 6),
                              al.float3(0, 0, 0))
@@ -480,8 +476,6 @@ if args.display:
                                                colormap_tex,
                                                solver.particle_radius, solver)
     display_proxy.add_map_graphical_pointers(dp)
-
-dp.copy_cn()
 
 initial_particle_x = dp.create((num_particles), 3)
 initial_particle_x.read_file(args.pos[0])

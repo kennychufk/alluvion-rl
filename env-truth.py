@@ -33,7 +33,6 @@ unit = Unit(real_kernel_radius=0.005,
             real_density0=1000,
             real_gravity=-9.80665)
 
-cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 cn.boundary_epsilon = 1e-9
@@ -134,7 +133,6 @@ if not generating_initial:
                         q=dp.f4(0, 0, 0, 1),
                         display_mesh=bunny_mesh)
 
-pile.build_grids(2 * kernel_radius)
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
 cn.contact_tolerance = particle_radius
@@ -179,8 +177,6 @@ solver.max_dt = unit.from_real_time(0.1 * unit.rl)
 solver.initial_dt = solver.max_dt
 solver.min_dt = 0
 solver.cfl = 0.4
-
-dp.copy_cn()
 
 dp.map_graphical_pointers()
 

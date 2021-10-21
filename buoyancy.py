@@ -17,7 +17,6 @@ volume_relative_to_cube = 0.82
 particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 gravity = dp.f3(0, -9.81, 0)
 
-cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 cn.boundary_epsilon = 1e-9
@@ -77,7 +76,6 @@ cylinder_density = cylinder_mass / (cylinder_radius * cylinder_radius * np.pi *
                                     cylinder_height)
 print(cylinder_density)
 
-pile.build_grids(4 * kernel_radius)
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
 cn.contact_tolerance = particle_radius
@@ -110,8 +108,6 @@ solver.min_dt = 0.0
 solver.cfl = 0.04
 solver.particle_radius = particle_radius
 solver.num_particles = max_num_particles
-
-dp.copy_cn()
 
 dp.map_graphical_pointers()
 #2 ^-11

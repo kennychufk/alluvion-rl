@@ -13,7 +13,6 @@ cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radiu
 volume_relative_to_cube = 0.8
 particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
-cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 
@@ -30,7 +29,6 @@ pile.add(dp.SphereDistance.create(0.667115443061774),
          x=dp.f3(0, 0, 0),
          q=dp.f4(0, 0, 0, 1),
          display_mesh=al.Mesh())
-pile.build_grids(kernel_radius)
 pile.reallocate_kinematics_on_device()
 
 num_particles = 1
@@ -51,7 +49,6 @@ solver.max_dt = 1e-3
 solver.min_dt = 0.0
 solver.cfl = 2e-2
 dp.coat(solver.particle_x).set(np.zeros(3))
-dp.copy_cn()
 
 print('x before', dp.coat(solver.particle_x).get())
 solver.step()

@@ -23,7 +23,6 @@ unit = Unit(real_kernel_radius=0.008,
             real_density0=998.91,
             real_gravity=-9.80665)
 
-cn.set_cubic_discretization_constants()
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 
@@ -58,7 +57,6 @@ pile.add(container_distance,
          al.uint3(map_base_res, map_height_res, map_base_res),
          sign=-1,
          x=unit.from_real_length(dp.f3(0, real_fluid_height * 0.5, 0)))
-pile.build_grids(kernel_radius)
 pile.reallocate_kinematics_on_device()
 
 container_aabb_range = container_distance.aabb_max - container_distance.aabb_min
@@ -86,7 +84,6 @@ solver.dt = 1e-3
 solver.max_dt = 1e-3
 solver.min_dt = 0.0
 solver.cfl = 2e-2
-dp.copy_cn()
 
 dp.map_graphical_pointers()
 runner.launch_create_fluid_block(solver.particle_x,
@@ -125,7 +122,6 @@ while True:
                  al.uint3(map_base_res, map_height_res, map_base_res),
                  sign=-1,
                  x=unit.from_real_length(dp.f3(0, real_fluid_height * 0.5, 0)))
-    pile.build_grids(kernel_radius)
     pile.reallocate_kinematics_on_device()
 
     dp.map_graphical_pointers()
