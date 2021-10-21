@@ -6,7 +6,7 @@ import numpy as np
 
 import alluvion as al
 
-from util import Unit, FluidSample, get_timestamp_and_hash
+from util import Unit, FluidSample, get_timestamp_and_hash, BuoySpec
 
 parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--initial', type=str, default='')
@@ -61,37 +61,18 @@ pile.add(container_distance,
          q=dp.f4(0, 0, 0, 1),
          display_mesh=al.Mesh())
 
-current_inset = 0.403
-
-cylinder_radius = unit.from_real_length(3.0088549658278843e-3)
-cylinder_height = unit.from_real_length(38.5e-3)
-cylinder_mass = unit.from_real_mass(1.06e-3)  # TODO: randomize
-cylinder_comy = unit.from_real_length(-8.852102803738316e-3)
-cylinder_volume = cylinder_radius * cylinder_radius * np.pi * cylinder_height
-cylinder_neutral_buoyant_force = -cylinder_volume * density0 * gravity.y
-cylinder_mesh = al.Mesh()
-cylinder_mesh.set_cylinder(cylinder_radius, cylinder_height, 24, 24)
-cylinder_mesh.translate(dp.f3(0, -cylinder_comy, 0))
-cylinder_inertia = unit.from_real_moment_of_inertia(
-    dp.f3(7.911343969145678e-8, 2.944622178863632e-8, 7.911343969145678e-8))
-cylinder_map_radial_size = 24
-cylinder_map_dim = al.uint3(
-    cylinder_map_radial_size,
-    int(cylinder_map_radial_size * cylinder_height / cylinder_radius / 2),
-    cylinder_map_radial_size)
+buoy = BuoySpec(dp, unit)
 
 num_buoys = 8
 for i in range(num_buoys):
-    pile.add(dp.CylinderDistance.create(cylinder_radius - current_inset,
-                                        cylinder_height - current_inset * 2,
-                                        cylinder_comy),
-             cylinder_map_dim,
+    pile.add(buoy.create_distance(),
+             buoy.map_dim,
              sign=1,
-             collision_mesh=cylinder_mesh,
-             mass=cylinder_mass,
+             collision_mesh=buoy.mesh,
+             mass=buoy.mass,
              restitution=0.3,
              friction=0.4,
-             inertia_tensor=cylinder_inertia,
+             inertia_tensor=buoy.inertia,
              x=dp.f3(
                  np.random.uniform(-container_width * 0.45,
                                    container_width * 0.45),
@@ -99,7 +80,7 @@ for i in range(num_buoys):
                  np.random.uniform(-container_width * 0.45,
                                    container_width * 0.45)),
              q=dp.f4(0, 0, 0, 1),
-             display_mesh=cylinder_mesh)
+             display_mesh=buoy.mesh)
 
 generating_initial = (len(args.initial) == 0)
 
