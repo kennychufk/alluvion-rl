@@ -26,14 +26,14 @@ parser.add_argument('--display', metavar='d', type=bool, default=False)
 args = parser.parse_args()
 
 
-def approximate_half_life(dynamic_viscosity, density0, pipe_radius):
+def approximate_half_life(kinematic_viscosity, pipe_radius):
     j0_zero = sc.jn_zeros(0, 1)[0]
-    return np.log(2) / (dynamic_viscosity * j0_zero * j0_zero / density0 /
-                        pipe_radius / pipe_radius)
+    return np.log(2) / (kinematic_viscosity * j0_zero * j0_zero / pipe_radius /
+                        pipe_radius)
 
 
-def developing_hagen_poiseuille(r, t, dynamic_viscosity, density0, a,
-                                pipe_radius, num_iterations):
+def developing_hagen_poiseuille(r, t, kinematic_viscosity, a, pipe_radius,
+                                num_iterations):
     j0_zeros = sc.jn_zeros(0, num_iterations)
     accumulation = np.zeros_like(r)
     for m in range(num_iterations):
@@ -43,18 +43,17 @@ def developing_hagen_poiseuille(r, t, dynamic_viscosity, density0, a,
 
         constant_part = 1 / (j0_zero * j0_zero * j0_zero * sc.jv(1, j0_zero))
         r_dependent_part = sc.jv(0, j0_zero_ratio * r)
-        time_dependent_part = np.exp(-dynamic_viscosity * t *
-                                     j0_zero_ratio_sqr / density0)
+        time_dependent_part = np.exp(-kinematic_viscosity * t *
+                                     j0_zero_ratio_sqr)
         accumulation += constant_part * r_dependent_part * time_dependent_part
-    return density0 * a / dynamic_viscosity * (
+    return a / kinematic_viscosity * (
         0.25 * (pipe_radius * pipe_radius - r * r) -
         pipe_radius * pipe_radius * 2 * accumulation)
 
 
-def acceleration_from_terminal_velocity(terminal_v, dynamic_viscosity,
-                                        density0, pipe_radius):
-    return terminal_v * 4 * dynamic_viscosity / density0 / (pipe_radius *
-                                                            pipe_radius)
+def acceleration_from_terminal_velocity(terminal_v, kinematic_viscosity,
+                                        pipe_radius):
+    return terminal_v * 4 * kinematic_viscosity / (pipe_radius * pipe_radius)
 
 
 class OptimSampling(FluidSample):
@@ -190,19 +189,18 @@ def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
 
 
 # across a variety of speed. Fixed radius. Fixed target dynamic viscosity. Look at one instant
-def compute_ground_truth(osampling, pipe_radius, ts, density0, accelerations,
-                         dynamic_viscosity):
+def compute_ground_truth(osampling, pipe_radius, ts, accelerations,
+                         kinematic_viscosity):
     ground_truth = np.zeros((len(accelerations), len(ts), osampling.num_rs))
     for acc_id, acc in enumerate(accelerations):
         for t_id, t in enumerate(ts):
             ground_truth[acc_id, t_id] = developing_hagen_poiseuille(
-                osampling.rs, t, dynamic_viscosity, density0, acc, pipe_radius,
-                100)
+                osampling.rs, t, kinematic_viscosity, acc, pipe_radius, 100)
     return ground_truth
 
 
 def simulate(param, is_grad_eval, dp, solver, osampling, initial_particle_x,
-             pipe_radius, ts, density0, accelerations, dynamic_viscosity):
+             pipe_radius, ts, accelerations, kinematic_viscosity):
     simulated = np.zeros((len(accelerations), len(ts), osampling.num_rs))
     summary = []
     for acc_id, acc in enumerate(accelerations):
@@ -304,9 +302,8 @@ def make_animate_command(input_filename, output_filename):
 
 
 def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
-             lambda_factors, density0, accelerations, dynamic_viscosity):
-    approx_half_life = approximate_half_life(dynamic_viscosity, density0,
-                                             pipe_radius)
+             lambda_factors, accelerations, kinematic_viscosity):
+    approx_half_life = approximate_half_life(kinematic_viscosity, pipe_radius)
     print('approx_half_life', approx_half_life)
     ts = approx_half_life * lambda_factors
 
@@ -317,8 +314,8 @@ def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
     best_loss = np.finfo(np.float64).max
     best_x = None
     x = param0
-    ground_truth = compute_ground_truth(osampling, pipe_radius, ts, density0,
-                                        accelerations, dynamic_viscosity)
+    ground_truth = compute_ground_truth(osampling, pipe_radius, ts,
+                                        accelerations, kinematic_viscosity)
 
     with open('switch', 'w') as f:
         f.write('1')
@@ -329,8 +326,8 @@ def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
         current_x = x
         x, loss, grad, simulated, summary = adam.update(
             simulate, ground_truth, mse_loss, x, x * 1e-2, dp, solver,
-            osampling, initial_particle_x, pipe_radius, ts, density0,
-            accelerations, dynamic_viscosity)
+            osampling, initial_particle_x, pipe_radius, ts, accelerations,
+            kinematic_viscosity)
         if (loss < best_loss):
             best_loss = loss
             wandb.summary['best_loss'] = best_loss
@@ -395,7 +392,7 @@ cn.set_particle_attr(particle_radius, particle_mass, density0)
 unit = Unit(real_kernel_radius=0.0025,
             real_density0=1000,
             real_gravity=-9.80665)
-dynamic_viscosity = unit.from_real_dynamic_viscosity(1e-3)
+kinematic_viscosity = unit.from_real_kinematic_viscosity(1e-6)
 
 # Pipe dimension
 pipe_radius_grid_span = 10
@@ -416,8 +413,8 @@ lambda_factors = np.array([0.5, 1.125, 1.5])
 # accelerations = np.array([2**-13 / 100, 2**-8 / 100])
 terminal_vs = unit.from_real_velocity(np.array([1.6e-5, 2e-2]))
 accelerations = acceleration_from_terminal_velocity(terminal_vs,
-                                                    dynamic_viscosity,
-                                                    density0, pipe_radius)
+                                                    kinematic_viscosity,
+                                                    pipe_radius)
 print('accelerations', accelerations)
 # accelerations = np.array([2**-13 / 100])
 # accelerations = np.array([2**-8 / 100])
@@ -494,18 +491,17 @@ for filename in old_filenames:
 
 wandb.init(project='alluvion')
 config = wandb.config
-config.dynamic_viscosity = dynamic_viscosity
+config.kinematic_viscosity = kinematic_viscosity
 config.density0 = density0
 config.pipe_radius = pipe_radius
 config.accelerations = accelerations
 config.num_particles = num_particles
-config.half_life = approximate_half_life(dynamic_viscosity, density0,
-                                         pipe_radius)
+config.half_life = approximate_half_life(kinematic_viscosity, pipe_radius)
 config.lambda_factors = lambda_factors
 config.kernel_radius = kernel_radius
 config.pipe_model_radius = pipe_model_radius
 config.precision = str(dp.default_dtype)
-config.Re = pipe_radius * pipe_radius * pipe_radius * density0 * density0 * 0.25 / dynamic_viscosity / dynamic_viscosity * accelerations
+config.Re = pipe_radius * pipe_radius * pipe_radius * 0.25 / kinematic_viscosity / kinematic_viscosity * accelerations
 print('Re', config.Re)
 config.lr = adam.lr
 config.initial_dt = solver.initial_dt
@@ -516,4 +512,4 @@ config.cfl = solver.cfl
 config.density_error_tolerance = solver.density_error_tolerance
 
 optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
-         lambda_factors, density0, accelerations, dynamic_viscosity)
+         lambda_factors, accelerations, kinematic_viscosity)
