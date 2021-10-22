@@ -34,6 +34,12 @@ class Unit:
     def to_real_per_length(self, l):
         return l * self.inv_rl
 
+    def from_real_volume(self, v):
+        return v * (self.inv_rl * self.inv_rl * self.inv_rl)
+
+    def to_real_volume(self, v):
+        return v * (self.rl * self.rl * self.rl)
+
     def from_real_dynamic_viscosity(self, mu):
         return mu * (self.inv_rdensity0 * self.inv_rl * self.inv_rl * self.rt)
 
