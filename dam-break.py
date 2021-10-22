@@ -11,6 +11,7 @@ cn = dp.cn
 cni = dp.cni
 dp.create_display(800, 600, "", False)
 display_proxy = dp.get_display_proxy()
+framebuffer = display_proxy.create_framebuffer()
 runner = dp.Runner()
 particle_radius = 0.25
 kernel_radius = 1.0
@@ -161,15 +162,20 @@ colormap_tex = display_proxy.create_colormap_viridis()
 #                             particle_normalized_attr, 0, 2)
 # display_proxy.add_normalize(solver, solver.particle_kappa_v, particle_normalized_attr, -0.002, 0)
 # display_proxy.add_unmap_graphical_pointers(dp)
+display_proxy.add_bind_framebuffer_step(framebuffer)
 display_proxy.add_particle_shading_program(solver.particle_x,
                                            particle_normalized_attr,
                                            colormap_tex,
                                            solver.particle_radius, solver)
 display_proxy.add_pile_shading_program(pile)
+display_proxy.add_show_framebuffer_shader(framebuffer)
 
 #display_proxy.run()
-for frame_id in range(40000):
+for frame_id in range(10):
     display_proxy.draw()
+    # framebuffer.write(f"screen{frame_id}.bmp")
+    print(framebuffer.width, framebuffer.height)
+
     dp.map_graphical_pointers()
     for substep_id in range(20):
         solver.step()
