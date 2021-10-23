@@ -43,8 +43,14 @@ class Unit:
     def from_real_dynamic_viscosity(self, mu):
         return mu * (self.inv_rdensity0 * self.inv_rl * self.inv_rl * self.rt)
 
+    def to_real_dynamic_viscosity(self, mu):
+        return mu * (self.rdensity0 * self.rl * self.rl * self.inv_rt)
+
     def from_real_kinematic_viscosity(self, nu):
         return nu * (self.inv_rl * self.inv_rl * self.rt)
+
+    def to_real_kinematic_viscosity(self, nu):
+        return nu * (self.rl * self.rl * self.inv_rt)
 
     def from_real_velocity(self, v):
         return v * (self.inv_rl * self.rt)

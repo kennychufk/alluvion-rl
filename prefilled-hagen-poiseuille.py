@@ -56,6 +56,11 @@ def acceleration_from_terminal_velocity(terminal_v, kinematic_viscosity,
     return terminal_v * 4 * kinematic_viscosity / (pipe_radius * pipe_radius)
 
 
+def calculate_terminal_velocity(kinematic_viscosity, pipe_radius,
+                                accelerations):
+    return 0.25 * accelerations * pipe_radius * pipe_radius / kinematic_viscosity
+
+
 class OptimSampling(FluidSample):
     def __init__(self, dp, pipe_length, pipe_radius, ts, num_particles):
         self.ts = ts
@@ -123,7 +128,13 @@ class TemporalStat:
 
 
 def pressurize(dp, solver, osampling):
-    if solver.t >= osampling.ts[osampling.sampling_cursor]:
+    next_sample_t = osampling.ts[osampling.sampling_cursor]
+    if solver.t + solver.max_dt >= next_sample_t:
+        remainder_dt = next_sample_t - solver.t
+        original_dt = solver.max_dt
+        solver.max_dt = solver.min_dt = solver.initial_dt = remainder_dt
+        solver.step_wrap1()
+        solver.max_dt = solver.min_dt = solver.initial_dt = original_dt
         osampling.prepare_neighbor_and_boundary_wrap1(runner, solver)
         osampling.sample_vector3(runner, solver, solver.particle_v)
         osampling.sample_density(runner)
@@ -133,7 +144,8 @@ def pressurize(dp, solver, osampling):
             solver.particle_x).get()[:, [0, 2]],
                                                               axis=1)
         osampling.aggregate()
-    solver.step_wrap1()
+    else:
+        solver.step_wrap1()
 
 
 def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
@@ -146,8 +158,8 @@ def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
     # solver.enable_divergence_solve = False
     # solver.enable_density_solve = False
     cn.dfsph_factor_epsilon = 1e-6
-    # solver.max_density_solve = 0
-    # solver.min_density_solve = 0
+    solver.max_density_solve = 0
+    solver.min_density_solve = 0
     # cn.vorticity_coeff = param[2]
     # cn.viscosity_omega = param[3]
     cn.inertia_inverse = 0.5  # recommended by author
@@ -319,7 +331,7 @@ def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
 
     with open('switch', 'w') as f:
         f.write('1')
-    for iteration in range(1):
+    for iteration in range(100):
         with open('switch', 'r') as f:
             if f.read(1) == '0':
                 break
@@ -336,10 +348,12 @@ def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
         save_result(iteration, ground_truth, simulated, osampling, unit,
                     accelerations)
         plot_summary(iteration, summary, unit)
-        param_names = ['vis', 'bvis', 'vvis', 'vbvis', 'v_shift', 'switch_k']
+        param_names = ['vis', 'bvis']
         log_object = {'loss': loss, '|∇|': LA.norm(grad)}
         for param_id, param_value in enumerate(current_x):
             log_object[param_names[param_id]] = param_value
+            log_object[param_names[param_id] +
+                       '_real'] = unit.to_real_kinematic_viscosity(param_value)
             log_object['∇' + param_names[param_id]] = grad[param_id]
         wandb.log(log_object)
     ## finalize
@@ -392,7 +406,9 @@ cn.set_particle_attr(particle_radius, particle_mass, density0)
 unit = Unit(real_kernel_radius=0.0025,
             real_density0=1000,
             real_gravity=-9.80665)
-kinematic_viscosity = unit.from_real_kinematic_viscosity(1e-6)
+kinematic_viscosity_real = np.load('kinematic_viscosity_real.npy').item()
+kinematic_viscosity = unit.from_real_kinematic_viscosity(
+    kinematic_viscosity_real)
 
 # Pipe dimension
 pipe_radius_grid_span = 10
@@ -410,14 +426,15 @@ print('pipe_radius', pipe_radius)
 
 # Pressurization and temporal parameters
 lambda_factors = np.array([0.5, 1.125, 1.5])
-# accelerations = np.array([2**-13 / 100, 2**-8 / 100])
-terminal_vs = unit.from_real_velocity(np.array([1.6e-5, 2e-2]))
-accelerations = acceleration_from_terminal_velocity(terminal_vs,
-                                                    kinematic_viscosity,
-                                                    pipe_radius)
+accelerations = np.array(
+    [1.0]) * 4 * kinematic_viscosity * kinematic_viscosity / (
+        pipe_radius * pipe_radius * pipe_radius)
 print('accelerations', accelerations)
 # accelerations = np.array([2**-13 / 100])
 # accelerations = np.array([2**-8 / 100])
+terminal_v = calculate_terminal_velocity(kinematic_viscosity, pipe_radius,
+                                         accelerations)
+print('terminal_v', terminal_v)
 
 # rigids
 max_num_contacts = 512
@@ -450,11 +467,11 @@ solver = dp.SolverI(runner,
 solver.num_particles = num_particles
 # solver.max_dt = 0.2
 # solver.max_dt = 0.1 * real_kernel_radius * inv_real_time
-solver.max_dt = unit.from_real_time(100 * unit.rl)
+solver.cfl = 0.015625
+solver.max_dt = solver.cfl * particle_radius * 2 / terminal_v
 solver.min_dt = solver.max_dt
 print('dt', solver.max_dt)
-solver.initial_dt = 0.1
-solver.cfl = 0.2
+solver.initial_dt = solver.max_dt
 # solver.density_change_tolerance = 1e-4
 # solver.density_error_tolerance = 1e-4
 
@@ -476,10 +493,8 @@ if args.display:
 
 initial_particle_x = dp.create((num_particles), 3)
 initial_particle_x.read_file(args.pos[0])
-# param0 = np.array([0.002049, 0.006532
-#                    ]) * unit.rt * (unit.inv_rl / 100) * (unit.inv_rl / 100)
-param0 = unit.from_real_kinematic_viscosity(np.array([2.049e-6, 6.532e-6]))
-# param0 = np.array([0.002050961174642602,0.00695])
+param0 = unit.from_real_kinematic_viscosity(np.array(
+    [2.049, 6.532])) * kinematic_viscosity_real
 adam = AdamOptim(param0, lr=2e-4)
 
 old_filenames = glob.glob('.alcache/*.mp4') + glob.glob('.alcache/*.png')
@@ -489,17 +504,17 @@ for filename in old_filenames:
     except:
         print("Error while deleting file : ", filename)
 
-wandb.init(project='alluvion')
+wandb.init(project='alluvion', tags=['vis_sweep2'])
 config = wandb.config
-config.kinematic_viscosity = kinematic_viscosity
-config.density0 = density0
-config.pipe_radius = pipe_radius
-config.accelerations = accelerations
+config.kinematic_viscosity_real = kinematic_viscosity_real
+config.pipe_radius_real = unit.to_real_length(pipe_radius)
+config.accelerations_real = unit.to_real_acceleration(accelerations)
 config.num_particles = num_particles
-config.half_life = approximate_half_life(kinematic_viscosity, pipe_radius)
+config.half_life_real = unit.to_real_time(
+    approximate_half_life(kinematic_viscosity, pipe_radius))
 config.lambda_factors = lambda_factors
-config.kernel_radius = kernel_radius
-config.pipe_model_radius = pipe_model_radius
+config.kernel_radius_real = unit.to_real_length(kernel_radius)
+config.pipe_mode_radius_real = unit.to_real_length(pipe_model_radius)
 config.precision = str(dp.default_dtype)
 config.Re = pipe_radius * pipe_radius * pipe_radius * 0.25 / kinematic_viscosity / kinematic_viscosity * accelerations
 print('Re', config.Re)
