@@ -1,18 +1,25 @@
+from pathlib import Path
+import argparse
 import math
 import time
-
-import alluvion as al
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from util import Unit, BuoySpec
+import alluvion as al
 
+from util import Unit, FluidSample, get_timestamp_and_hash, BuoySpec
+
+parser = argparse.ArgumentParser(description='RL ground truth generator')
+parser.add_argument('--output-dir', type=str, default='.')
+parser.add_argument('--write-visual', type=bool, default=False)
+args = parser.parse_args()
 dp = al.Depot(np.float32)
 cn = dp.cn
 cni = dp.cni
 dp.create_display(800, 600, "", False)
 display_proxy = dp.get_display_proxy()
 runner = dp.Runner()
+
 particle_radius = 0.25
 kernel_radius = 1.0
 density0 = 1.0
@@ -22,26 +29,25 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
 
-# real_kernel_radius = 0.0025
 unit = Unit(real_kernel_radius=0.005,
             real_density0=1000,
             real_gravity=-9.80665)
 
 cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
+cn.boundary_epsilon = 1e-9
 cn.gravity = gravity
 cn.viscosity, cn.boundary_viscosity = unit.from_real_kinematic_viscosity(
     np.array([2.049e-6, 6.532e-6]))
-
-cn.inertia_inverse = 0.5
-cn.vorticity_coeff = 0.01
-cn.viscosity_omega = 0.1
+# TODO: randomize viscosity
+cni.max_num_particles_per_cell = 64
+cni.max_num_neighbors_per_particle = 64
 
 # rigids
 max_num_contacts = 512
 pile = dp.Pile(dp, runner, max_num_contacts)
 
-target_container_volume = unit.from_real_volume(0.01)
+target_container_volume = unit.from_real_volume(0.008)
 container_mesh = al.Mesh()
 # container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/02880940/b5d81a5bbbb8efe7c785f06f424b9d06/models/inv-meshfix.obj' # OK
 # container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/02880940/a593e8863200fdb0664b3b9b23ddfcbc/models/inv-meshfix.obj' #OK
@@ -64,13 +70,14 @@ print(new_volume)
 
 container_triangle_mesh = dp.TriangleMesh()
 container_mesh.copy_to(container_triangle_mesh)
-container_distance = dp.MeshDistance.create(container_triangle_mesh)
+container_distance = dp.MeshDistance.create(container_triangle_mesh,
+                                            0.444 * kernel_radius)
 
 print(container_distance.aabb_min)
 print(container_distance.aabb_max)
 
 container_extent = container_distance.aabb_max - container_distance.aabb_min
-container_res_float = container_extent / 1
+container_res_float = container_extent / particle_radius
 container_res = al.uint3(int(container_res_float.x),
                          int(container_res_float.y),
                          int(container_res_float.z))
@@ -81,10 +88,15 @@ pile.add(container_distance,
          collision_mesh=container_mesh,
          mass=0,
          restitution=0.8,
-         friction=0.3)
+         friction=0.3,
+         distance_grid_filename='container_distance_grid.alu',
+         volume_grid_filename='container_volume_grid.alu')
+# pile.distance_grids[0].write_file("container_distance_grid.alu", pile.distance_grids[0].get_linear_shape())
+# pile.volume_grids[0].write_file("container_volume_grid.alu", pile.volume_grids[0].get_linear_shape())
 
 buoy = BuoySpec(dp, unit)
 num_buoys = 8
+# TODO: randomize
 
 
 def get_random_position(aabb_min, aabb_max):
@@ -99,30 +111,15 @@ def get_random_quat():
 
 
 def has_collision(pile, i):
-    num_contacts = pile.find_contacts()
-    if (num_contacts > 0):
-        print(i, 'contains collision', num_contacts)
-        print('pile 0 x', pile.x[0])
-    return num_contacts > 0
-    # for j in range(pile.get_size()):
-    #     if j != i:
-    #         num_contacts1 = pile.find_contacts(i, j)
-    #         num_contacts1a = dp.coat(pile.num_contacts).get()[0]
-    #         num_contacts2 = pile.find_contacts(j, i)
-    #         num_contacts2a = dp.coat(pile.num_contacts).get()[0]
-    #         if num_contacts1>0 or num_contacts2>0:
-    #             print("contains collision", i, j, num_contacts1, num_contacts2, num_contacts1a, num_contacts2a)
-    #             # print("contains collision", i, j, pile.find_contacts(i, j), num_contacts2)
-    #             return True
-    # return False
-
-
-def has_collision2(pile, i):
+    # num_contacts = pile.find_contacts()
+    # if (num_contacts > 0):
+    #     print(i, 'contains collision', num_contacts)
+    #     print('pile 0 x', pile.x[0])
+    # return num_contacts > 0
     for j in range(pile.get_size()):
         if j != i:
-            num_contacts2 = pile.find_contacts(j, i)
-            if num_contacts2 > 0:
-                print("contains collision", i, j, num_contacts2)
+            if pile.find_contacts(i, j) > 0 or pile.find_contacts(j, i) > 0:
+                print("contains collision", i, j)
                 return True
     return False
 
@@ -157,22 +154,23 @@ agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/04530566/66
 # agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03513137/91c0193d38f0c5338c9affdacaf55648/models/manifold2-decimate.obj'
 # agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03636649/83353863ea1349682ebeb1e6a8111f53/models/manifold2-decimate.obj'
 agitator_mesh.set_obj(agitator_filename)
-agitator_original_vol, _, _, _ = agitator_mesh.calculate_mass_properties(1)
-agitator_mesh.scale(np.cbrt(193 / agitator_original_vol))
-agitator_density = unit.from_real_density(800)
+agitator_original_vol, _, _, _ = agitator_mesh.calculate_mass_properties(
+    1)  # TODO: perform axis transformation beforehand
+agitator_scale = np.cbrt(193 / agitator_original_vol)  # TODO: randomize
+agitator_mesh.scale(agitator_scale)
+agitator_density = unit.from_real_density(800)  #TODO: randomize
 agitator_mass, agitator_com, agitator_inertia, agitator_inertia_off_diag = agitator_mesh.calculate_mass_properties(
     agitator_density)
 new_vol, _, _, _ = agitator_mesh.calculate_mass_properties(1)
 print('new_vol', new_vol)
 agitator_triangle_mesh = dp.TriangleMesh()
 agitator_mesh.copy_to(agitator_triangle_mesh)
-agitator_distance = dp.MeshDistance.create(agitator_triangle_mesh)
+agitator_distance = dp.MeshDistance.create(agitator_triangle_mesh, 0)
 agitator_extent = agitator_distance.aabb_max - agitator_distance.aabb_min
 print('agitator_extent', agitator_extent)
 agitator_res_float = agitator_extent / particle_radius
 agitator_res = al.uint3(int(agitator_res_float.x), int(agitator_res_float.y),
                         int(agitator_res_float.z))
-num_trials = 0
 agitator_id = pile.add(agitator_distance,
                        agitator_res,
                        sign=1,
@@ -186,27 +184,9 @@ agitator_id = pile.add(agitator_distance,
                        q=get_random_quat(),
                        display_mesh=agitator_mesh)
 while has_collision(pile, agitator_id):
-    # pile.replace(agitator_id,
-    #                 dp.MeshDistance.create(agitator_triangle_mesh),
-    #                 agitator_res,
-    #                 sign=1,
-    #                 collision_mesh=agitator_mesh,
-    #                 mass=agitator_mass,
-    #                 restitution=0.8,
-    #                 friction=0.3,
-    #                 inertia_tensor=agitator_inertia,
-    #                 x=get_random_position(container_distance.aabb_min, container_distance.aabb_max),
-    #                 q=get_random_quat(),
-    #                 display_mesh=agitator_mesh)
     pile.x[agitator_id] = get_random_position(container_distance.aabb_min,
                                               container_distance.aabb_max)
-    print(pile.x[agitator_id])
     pile.q[agitator_id] = get_random_quat()
-    print(pile.q[agitator_id])
-    num_trials += 1
-    if (num_trials > 100):
-        import sys
-        sys.exit(0)
 
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
@@ -225,43 +205,66 @@ max_fill_num_particles = pile.compute_sort_fluid_block_internal_all(
     box_max=container_distance.aabb_max,
     particle_radius=particle_radius,
     mode=fluid_block_mode)
-num_particles = 320000
+num_particles = 320000  # TODO: randomize
 # num_particles = int(max_fill_num_particles*0.6)
 # num_particles = max_fill_num_particles
 print('num_positions', num_positions)
 print('num_particles', num_particles)
 
+## ======== internal sample points
+sample_x_fill_mode = 0
+sample_radius = kernel_radius
+num_sample_positions = dp.Runner.get_fluid_block_num_particles(
+    mode=sample_x_fill_mode,
+    box_min=container_distance.aabb_min,
+    box_max=container_distance.aabb_max,
+    particle_radius=sample_radius)
+sample_internal_encoded = dp.create_coated((num_sample_positions), 1,
+                                           np.uint32)
+num_samples = pile.compute_sort_fluid_block_internal_all(
+    sample_internal_encoded,
+    box_min=container_distance.aabb_min,
+    box_max=container_distance.aabb_max,
+    particle_radius=sample_radius,
+    mode=sample_x_fill_mode)
+print('num_samples', num_samples)
+sampling = FluidSample(dp, np.zeros((num_samples, 3), dp.default_dtype))
+runner.launch_create_fluid_block_internal(sampling.sample_x,
+                                          sample_internal_encoded,
+                                          num_samples,
+                                          offset=0,
+                                          particle_radius=sample_radius,
+                                          mode=sample_x_fill_mode,
+                                          box_min=container_distance.aabb_min,
+                                          box_max=container_distance.aabb_max)
+dp.remove(sample_internal_encoded)
+## ======== end of internal sample points
+
 container_aabb_range_per_h = container_extent / kernel_radius
-grid_res = al.uint3(int(math.ceil(container_aabb_range_per_h.x)),
-                    int(math.ceil(container_aabb_range_per_h.y)),
-                    int(math.ceil(container_aabb_range_per_h.z))) + 4
-grid_offset = al.int3(
+cni.grid_res = al.uint3(int(math.ceil(container_aabb_range_per_h.x)),
+                        int(math.ceil(container_aabb_range_per_h.y)),
+                        int(math.ceil(container_aabb_range_per_h.z))) + 4
+cni.grid_offset = al.int3(
     int(container_distance.aabb_min.x) - 2,
     int(container_distance.aabb_min.y) - 2,
     int(container_distance.aabb_min.z) - 2)
-print('grid_res', grid_res)
-print('grid_offset', grid_offset)
-
-cni.grid_res = grid_res
-cni.grid_offset = grid_offset
-cni.max_num_particles_per_cell = 64
-cni.max_num_neighbors_per_particle = 64
+print('grid_res', cni.grid_res)
+print('grid_offset', cni.grid_offset)
 
 solver = dp.SolverI(runner,
                     pile,
                     dp,
                     num_particles,
-                    num_ushers=0,
                     enable_surface_tension=False,
                     enable_vorticity=False,
                     graphical=True)
 particle_normalized_attr = dp.create_graphical_like(solver.particle_density)
+
 solver.num_particles = num_particles
 solver.max_dt = unit.from_real_time(0.1 * unit.rl)
 solver.initial_dt = solver.max_dt
 solver.min_dt = 0
 solver.cfl = 0.4
-# solver.density_error_tolerance = 1e-4
 
 dp.map_graphical_pointers()
 runner.launch_create_fluid_block_internal(solver.particle_x,
@@ -272,6 +275,7 @@ runner.launch_create_fluid_block_internal(solver.particle_x,
                                           mode=fluid_block_mode,
                                           box_min=container_distance.aabb_min,
                                           box_max=container_distance.aabb_max)
+dp.remove(internal_encoded)
 dp.unmap_graphical_pointers()
 
 display_proxy.set_camera(unit.from_real_length(al.float3(0, 0.6, 0.6)),
@@ -286,15 +290,137 @@ display_proxy.add_particle_shading_program(solver.particle_x,
                                            solver.particle_radius, solver)
 display_proxy.add_pile_shading_program(pile)
 
-#display_proxy.run()
-for frame_id in range(2000000):
-    display_proxy.draw()
+timestamp_str, timestamp_hash = get_timestamp_and_hash()
+frame_directory = f'{args.output_dir}/rltruth-{timestamp_hash}-{timestamp_str}'
+Path(frame_directory).mkdir(parents=True, exist_ok=True)
+# =========== save config
+np.save(f'{frame_directory}/fluid_mass.npy',
+        unit.to_real_mass(num_particles * particle_mass))
+np.save(f'{frame_directory}/container_scale.npy', container_scale)
+np.save(f'{frame_directory}/agitator_scale.npy', agitator_scale)
+# TODO: save kinematic_viscosity_real
+real_sample_x = dp.create_coated_like(sampling.sample_x)
+real_sample_x.set_from(sampling.sample_x)
+real_sample_x.scale(unit.to_real_length(1))
+real_sample_x.write_file(f'{frame_directory}/sample-x.alu',
+                         sampling.num_samples)
+dp.remove(real_sample_x)
+# =========== end of save config
+
+
+class OrnsteinUhlenbeckProcess:
+    def __init__(self, dim, mu=0.0, sigma=0.2, theta=0.15):
+        self.theta = theta
+        self.mu = mu
+        self.sigma = sigma
+        self.dim = dim
+        self.x_prev = np.zeros(dim)
+
+    def __call__(self, dt):
+        x = self.x_prev + self.theta * (
+            self.mu - self.x_prev
+        ) * dt + self.sigma * np.sqrt(dt) * np.random.normal(size=self.dim)
+        self.x_prev = x
+        return x
+
+
+linear_acc_rp = OrnsteinUhlenbeckProcess(
+    3, sigma=np.array([8, 3, 8]), theta=0.35)  # randomize sigma and theta
+angular_acc_rp = OrnsteinUhlenbeckProcess(3, sigma=20 * np.pi)
+
+truth_real_freq = 100.0
+truth_real_interval = 1.0 / truth_real_freq
+next_truth_frame_id = 0
+
+visual_real_freq = 30.0
+visual_real_interval = 1.0 / visual_real_freq
+next_visual_frame_id = 0
+visual_x_scaled = dp.create_coated_like(solver.particle_x)
+
+target_t = unit.from_real_time(10.0)
+last_tranquillized = 0.0
+rest_state_achieved = False
+
+v_rms = 0
+while not rest_state_achieved or solver.t < target_t:
     dp.map_graphical_pointers()
-    for substep_id in range(20):
+    for frame_interstep in range(10):
+        if rest_state_achieved:
+            if solver.t >= unit.from_real_time(
+                    next_truth_frame_id * truth_real_interval):
+                sampling.prepare_neighbor_and_boundary(runner, solver)
+                sample_v = sampling.sample_velocity(runner, solver)
+                sample_v.scale(unit.to_real_velocity(1))
+                sample_v.write_file(
+                    f'{frame_directory}/v-{next_truth_frame_id}.alu',
+                    sampling.num_samples)
+                sample_density = sampling.sample_density(runner)
+                sample_density.scale(unit.to_real_density(1))
+                sample_density.write_file(
+                    f'{frame_directory}/density-{next_truth_frame_id}.alu',
+                    sampling.num_samples)
+                pile.write_file(
+                    f'{frame_directory}/{next_truth_frame_id}.pile',
+                    unit.to_real_length(1), unit.to_real_velocity(1),
+                    unit.to_real_angular_velocity(1))
+                next_truth_frame_id += 1
+            if args.write_visual and solver.t >= unit.from_real_time(
+                    next_visual_frame_id * visual_real_interval):
+                visual_x_scaled.set_from(solver.particle_x)
+                visual_x_scaled.scale(unit.to_real_length(1))
+                visual_x_scaled.write_file(
+                    f'{frame_directory}/visual-x-{next_visual_frame_id}.alu',
+                    solver.num_particles)
+                pile.write_file(
+                    f'{frame_directory}/visual-{next_visual_frame_id}.pile',
+                    unit.to_real_length(1), unit.to_real_velocity(1),
+                    unit.to_real_angular_velocity(1))
+                next_visual_frame_id += 1
+            ###### move object #########
+            agitator_v_al = pile.v[agitator_id]
+            agitator_omega_al = pile.omega[agitator_id]
+            agitator_v = np.array(
+                [agitator_v_al.x, agitator_v_al.y, agitator_v_al.z],
+                dp.default_dtype)
+            agitator_omega = np.array([
+                agitator_omega_al.x, agitator_omega_al.y, agitator_omega_al.z
+            ], dp.default_dtype)
+
+            agitator_x = pile.x[agitator_id]
+            agitator_angular_acc = unit.from_real_angular_acceleration(
+                angular_acc_rp(solver.dt))
+            agitator_a = unit.from_real_acceleration(linear_acc_rp(solver.dt))
+            # print('start force', agitator_a, agitator_angular_acc)
+
+            agitator_v += agitator_a * solver.dt
+            agitator_omega += agitator_angular_acc * solver.dt
+
+            pile.v[agitator_id] = dp.f3(agitator_v[0], agitator_v[1],
+                                        agitator_v[2])
+            pile.omega[agitator_id] = dp.f3(agitator_omega[0],
+                                            agitator_omega[1],
+                                            agitator_omega[2])
+        else:  # if not rest_state_achieved
+            v_rms = np.sqrt(
+                runner.sum(solver.particle_cfl_v2, solver.num_particles) /
+                solver.num_particles)
+            if unit.to_real_time(solver.t - last_tranquillized) > 0.45:
+                solver.particle_v.set_zero()
+                solver.reset_solving_var()
+                last_tranquillized = solver.t
+            elif unit.to_real_time(solver.t - last_tranquillized
+                                   ) > 0.4 and unit.to_real_velocity(
+                                       v_rms) < 0.006:
+                print("rest state achieved at", unit.to_real_time(solver.t))
+                solver.t = 0
+                rest_state_achieved = True
         solver.step()
+    print(
+        f"t = {unit.to_real_time(solver.t) } dt = {unit.to_real_time(solver.dt)} cfl = {solver.utilized_cfl} vrms={unit.to_real_velocity(v_rms)} max_v={unit.to_real_velocity(np.sqrt(solver.max_v2))} num solves = {solver.num_density_solve}"
+    )
     solver.normalize(solver.particle_v, particle_normalized_attr, 0,
                      unit.from_real_velocity(0.01))
     dp.unmap_graphical_pointers()
+    display_proxy.draw()
 
-dp.remove(internal_encoded)
 dp.remove(particle_normalized_attr)
