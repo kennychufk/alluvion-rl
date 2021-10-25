@@ -139,5 +139,6 @@ cython_debug/
 
 *.alu
 *.npy
-*.obj
+switch
 wandb/
+.alcache
