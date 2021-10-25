@@ -12,6 +12,7 @@ from util import Unit, FluidSample, get_timestamp_and_hash, BuoySpec
 parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--output-dir', type=str, default='.')
 parser.add_argument('--write-visual', type=bool, default=False)
+parser.add_argument('--shape-dir', type=str, required=True)
 args = parser.parse_args()
 dp = al.Depot(np.float32)
 cn = dp.cn
@@ -49,18 +50,27 @@ pile = dp.Pile(dp, runner, max_num_contacts)
 
 target_container_volume = unit.from_real_volume(0.008)
 container_mesh = al.Mesh()
-# container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/02880940/b5d81a5bbbb8efe7c785f06f424b9d06/models/inv-meshfix.obj' # OK
-# container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/02880940/a593e8863200fdb0664b3b9b23ddfcbc/models/inv-meshfix.obj' #OK
-# container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03991062/3fd59dd13de9ccfd703ecb6aac9c5d3c/models/inv-meshfix.obj' #OK
-# container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03991062/be0b5e9deced304a2c59a4d90e63212/models/inv-meshfix.obj' #OK
-# container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03991062/3152bd6fb7bf09d625ebd1cd0b422e32/models/inv-meshfix.obj' # OK except one particle
-# container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/02808440/e78f7e89878402513af30a3946d92feb/models/inv-meshfix.obj' #OK
-# container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/02808440/22eb6e2af43e6e78ba47eca8aa80094/models/inv-meshfix.obj' # OK
-container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/02808440/549663876b12914accd0340812259a39/models/inv-meshfix.obj'  # OK
-# container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/02808440/c4c3e4b9223ac6b71c17aef130ed6213/models/inv-meshfix.obj' # OK
-# container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03593526/6c7bcc925e7c6fdfb33495457ee36a49/models/inv-meshfix.obj' #OK
-# container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/02876657/35ad544a3a4b25b122de9a89c84a71b7/models/inv-meshfix.obj' #OK
-container_mesh.set_obj(container_filename)
+
+container_options = [
+    '02880940/b5d81a5bbbb8efe7c785f06f424b9d06',
+    '02880940/a593e8863200fdb0664b3b9b23ddfcbc',
+    '03991062/3fd59dd13de9ccfd703ecb6aac9c5d3c',
+    '03991062/be0b5e9deced304a2c59a4d90e63212',
+    '03991062/3152bd6fb7bf09d625ebd1cd0b422e32',
+    '02808440/e78f7e89878402513af30a3946d92feb',
+    '02808440/22eb6e2af43e6e78ba47eca8aa80094',
+    '02808440/549663876b12914accd0340812259a39',
+    '02808440/c4c3e4b9223ac6b71c17aef130ed6213',
+    '03593526/6c7bcc925e7c6fdfb33495457ee36a49',
+    '02876657/35ad544a3a4b25b122de9a89c84a71b7'
+]
+
+container_selected_id = 6  #TODO: randomize
+
+#container_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/02808440/549663876b12914accd0340812259a39/models/inv-meshfix.obj'  # OK
+container_model_dir = f'{args.shape_dir}/{container_options[container_selected_id]}/models'
+container_mesh_filename = f'{container_model_dir}/inv-meshfix.obj'
+container_mesh.set_obj(container_mesh_filename)
 original_volume, _, _, _ = container_mesh.calculate_mass_properties()
 print(original_volume)
 container_scale = np.cbrt(target_container_volume / original_volume)
@@ -82,17 +92,33 @@ container_res = al.uint3(int(container_res_float.x),
                          int(container_res_float.y),
                          int(container_res_float.z))
 print('container_res', container_res)
-pile.add(container_distance,
-         container_res,
-         sign=-1,
-         collision_mesh=container_mesh,
-         mass=0,
-         restitution=0.8,
-         friction=0.3,
-         distance_grid_filename='container_distance_grid.alu',
-         volume_grid_filename='container_volume_grid.alu')
-# pile.distance_grids[0].write_file("container_distance_grid.alu", pile.distance_grids[0].get_linear_shape())
-# pile.volume_grids[0].write_file("container_volume_grid.alu", pile.volume_grids[0].get_linear_shape())
+container_distance_grid_filename = f'{container_model_dir}/container_distance_grid.alu'
+container_volume_grid_filename = f'{container_model_dir}/container_volume_grid.alu'
+if Path(container_distance_grid_filename).is_file() and Path(
+        container_volume_grid_filename).is_file():
+    pile.add(container_distance,
+             container_res,
+             sign=-1,
+             collision_mesh=container_mesh,
+             mass=0,
+             restitution=0.8,
+             friction=0.3,
+             distance_grid_filename=container_distance_grid_filename,
+             volume_grid_filename=container_volume_grid_filename)
+else:
+    print("Grid files not found. Build from scratch.")
+    pile.add(container_distance,
+             container_res,
+             sign=-1,
+             collision_mesh=container_mesh,
+             mass=0,
+             restitution=0.8,
+             friction=0.3)
+    pile.distance_grids[0].write_file(
+        container_distance_grid_filename,
+        pile.distance_grids[0].get_linear_shape())
+    pile.volume_grids[0].write_file(container_volume_grid_filename,
+                                    pile.volume_grids[0].get_linear_shape())
 
 buoy = BuoySpec(dp, unit)
 num_buoys = 8
@@ -111,11 +137,6 @@ def get_random_quat():
 
 
 def has_collision(pile, i):
-    # num_contacts = pile.find_contacts()
-    # if (num_contacts > 0):
-    #     print(i, 'contains collision', num_contacts)
-    #     print('pile 0 x', pile.x[0])
-    # return num_contacts > 0
     for j in range(pile.get_size()):
         if j != i:
             if pile.find_contacts(i, j) > 0 or pile.find_contacts(j, i) > 0:
@@ -142,20 +163,30 @@ for i in range(num_buoys):
                                               container_distance.aabb_max)
 
 agitator_mesh = al.Mesh()
-# agitator_filename = '3dmodels/bunny-pa.obj'
-# agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03797390/ec846432f3ebedf0a6f32a8797e3b9e9/models/manifold2-decimate.obj'
-# agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03046257/757fd88d3ddca2403406473757712946/models/manifold2-decimate.obj'
-# agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/02942699/9db4b2c19c858a36eb34db531a289b8e/models/manifold2-decimate.obj'
-# agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03261776/1d4f9c324d6388a9b904f4192b538029/models/manifold2-decimate.obj'
-# agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03325088/daa26435e1603392b7a867e9b35a1295/models/manifold2-decimate.obj'
-# agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03759954/35f36e337df50fcb92b3c4741299c1af/models/manifold2-decimate.obj'
-# agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/04401088/e5bb37415abcf3b7e1c1039f91f43fda/models/manifold2-decimate.obj'
-agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/04530566/66a90b7b92ff2549f2635cfccf45023/models/manifold2-decimate.obj'
-# agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03513137/91c0193d38f0c5338c9affdacaf55648/models/manifold2-decimate.obj'
-# agitator_filename = '/media/kennychufk/Data/KennyCHU/ShapeNetCore.v2/03636649/83353863ea1349682ebeb1e6a8111f53/models/manifold2-decimate.obj'
-agitator_mesh.set_obj(agitator_filename)
+
+agitator_options = [
+    '03797390/ec846432f3ebedf0a6f32a8797e3b9e9',
+    '03046257/757fd88d3ddca2403406473757712946',
+    '02942699/9db4b2c19c858a36eb34db531a289b8e',
+    '03261776/1d4f9c324d6388a9b904f4192b538029',
+    '03325088/daa26435e1603392b7a867e9b35a1295',
+    '03759954/35f36e337df50fcb92b3c4741299c1af',
+    '04401088/e5bb37415abcf3b7e1c1039f91f43fda',
+    '04530566/66a90b7b92ff2549f2635cfccf45023',
+    '03513137/91c0193d38f0c5338c9affdacaf55648',
+    '03636649/83353863ea1349682ebeb1e6a8111f53'
+]
+
+agitator_selected_id = 6  #TODO: randomize
+
+agitator_model_dir = f'{args.shape_dir}/{agitator_options[agitator_selected_id]}/models'
+agitator_mesh_filename = f'{agitator_model_dir}/manifold2-decimate-pa.obj'
+print(agitator_mesh_filename)
+print(Path(agitator_mesh_filename).is_file())
+agitator_mesh.set_obj(agitator_mesh_filename)
 agitator_original_vol, _, _, _ = agitator_mesh.calculate_mass_properties(
     1)  # TODO: perform axis transformation beforehand
+print('agitator_original_vol', agitator_original_vol)
 agitator_scale = np.cbrt(193 / agitator_original_vol)  # TODO: randomize
 agitator_mesh.scale(agitator_scale)
 agitator_density = unit.from_real_density(800)  #TODO: randomize
@@ -325,7 +356,8 @@ class OrnsteinUhlenbeckProcess:
 
 
 linear_acc_rp = OrnsteinUhlenbeckProcess(
-    3, sigma=np.array([8, 3, 8]), theta=0.35)  # randomize sigma and theta
+    3, sigma=np.array([8, 3,
+                       8]), theta=0.35)  # TODO: randomize sigma and theta
 angular_acc_rp = OrnsteinUhlenbeckProcess(3, sigma=20 * np.pi)
 
 truth_real_freq = 100.0
