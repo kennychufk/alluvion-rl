@@ -219,6 +219,13 @@ truth_buoy_pile_real = dp.Pile(dp, runner, 0)
 for i in range(max_num_buoys):
     truth_buoy_pile_real.add(dp.SphereDistance.create(0), al.uint3(64, 64, 64))
 
+max_xoffset = 0.05
+max_voffset = 0.04
+max_focal_dist = 0.12
+min_usher_kernel_radius = 0.02
+max_usher_kernel_radius = 0.06
+max_strength = 1000
+
 agent = TD3(
     actor_lr=3e-4,
     critic_lr=3e-4,
@@ -229,13 +236,18 @@ agent = TD3(
     gamma=0.95,
     # hidden_sizes=[2048, 1800],
     min_action=np.array([
-        -0.03, -0.03, -0.03, -0.03, -0.03, -0.03, -0.03, -0.03, -0.03, -0.01,
-        -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, 0.0, 0.06, 0
+        -max_xoffset, -max_xoffset, -max_xoffset, -max_xoffset, -max_xoffset,
+        -max_xoffset, -max_xoffset, -max_xoffset, -max_xoffset, -max_voffset,
+        -max_voffset, -max_voffset, -max_voffset, -max_voffset, -max_voffset,
+        -max_voffset, -max_voffset, -max_voffset, 0.0, min_usher_kernel_radius,
+        0
     ]),
     max_action=np.array([
-        +0.03, +0.03, +0.03, +0.03, +0.03, +0.03, +0.03, +0.03, +0.03, +0.01,
-        +0.01, +0.01, +0.01, +0.01, +0.01, +0.01, +0.01, +0.01, 0.12, 0.02,
-        1000
+        +max_xoffset, +max_xoffset, +max_xoffset, +max_xoffset, +max_xoffset,
+        +max_xoffset, +max_xoffset, +max_xoffset, +max_xoffset, +max_voffset,
+        +max_voffset, +max_voffset, +max_voffset, +max_voffset, +max_voffset,
+        +max_voffset, +max_voffset, +max_voffset, max_focal_dist,
+        max_usher_kernel_radius, max_strength
     ]),
     learn_after=100000,
     hidden_sizes=[1024, 512],
@@ -353,6 +365,7 @@ while True:
     solver.t = 0
     sampling = FluidSample(dp, f'{ground_truth_dir}/sample-x.alu')
     sampling.sample_x.scale(unit.from_real_length(1))
+    ground_truth = dp.create_coated_like(sampling.sample_data3)
     dp.map_graphical_pointers()
     solver.update_particle_neighbors()
     num_buoys = dp.Pile.get_size_from_file(f'{ground_truth_dir}/0.pile') - 2
@@ -416,14 +429,11 @@ while True:
         simulation_v_real = sampling.sample_velocity(runner, solver)
         simulation_v_real.scale(unit.to_real_velocity(1))
 
-        # TODO: accelerate using CUDA kernel
-        simulation_v_real_np = simulation_v_real.get()
-        sampling.sample_data3.read_file(
-            f'{ground_truth_dir}/v-{frame_id+1}.alu')
-        truth_v_real_np = sampling.sample_data3.get()
-        reward = -mean_squared_error(simulation_v_real_np, truth_v_real_np)
-        do_nothing_reward = -mean_squared_error(np.zeros_like(truth_v_real_np),
-                                                truth_v_real_np)
+        ground_truth.read_file(f'{ground_truth_dir}/v-{frame_id+1}.alu')
+        reward = -runner.calculate_mse(
+            simulation_v_real, ground_truth, n=sampling.num_samples)
+        do_nothing_reward = -runner.calculate_mean_squared(
+            ground_truth, sampling.num_samples)
         early_termination = False
         if reward < do_nothing_reward * 10:
             print(f'early termination {reward} {do_nothing_reward}')
@@ -456,5 +466,6 @@ while True:
         'offset_score': (score - do_nothing_score),
         'score100': np.mean(list(score_history))
     })
+    dp.remove(ground_truth)
     sampling.destroy_variables()
     episode_id += 1
