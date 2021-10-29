@@ -19,6 +19,7 @@ parser = argparse.ArgumentParser(description='RL playground')
 parser.add_argument('--seed', type=int, default=2021)
 parser.add_argument('--cache-dir', type=str, default='.')
 parser.add_argument('--truth-dir', type=str, default='.')
+parser.add_argument('--display', metavar='d', type=bool, default=False)
 args = parser.parse_args()
 
 np.random.seed(args.seed)
@@ -100,8 +101,9 @@ def set_usher_param(usher, dp, unit, truth_buoy_pile_real, act_aggregated,
 dp = al.Depot(np.float32)
 cn = dp.cn
 cni = dp.cni
-dp.create_display(800, 600, "", False)
-display_proxy = dp.get_display_proxy()
+if args.display:
+    dp.create_display(800, 600, "", False)
+display_proxy = dp.get_display_proxy() if args.display else None
 runner = dp.Runner()
 
 particle_radius = 0.25
@@ -175,8 +177,7 @@ solver = dp.SolverI(runner,
                     num_ushers=max_num_buoys,
                     enable_surface_tension=False,
                     enable_vorticity=False,
-                    graphical=True)
-particle_normalized_attr = dp.create_graphical((max_num_particles), 1)
+                    graphical=args.display)
 
 usher_sampling = FluidSample(dp, np.zeros((max_num_buoys, 3),
                                           dp.default_dtype))
@@ -186,17 +187,19 @@ solver.initial_dt = solver.max_dt
 solver.min_dt = 0
 solver.cfl = 0.4
 
-display_proxy.set_camera(unit.from_real_length(al.float3(0, 0.06, 0.4)),
-                         unit.from_real_length(al.float3(0, 0.0, 0)))
-display_proxy.set_clip_planes(unit.to_real_length(1),
-                              container_distance.aabb_max.z * 20)
-colormap_tex = display_proxy.create_colormap_viridis()
+if args.display:
+    display_proxy.set_camera(unit.from_real_length(al.float3(0, 0.06, 0.4)),
+                             unit.from_real_length(al.float3(0, 0.0, 0)))
+    display_proxy.set_clip_planes(unit.to_real_length(1),
+                                  container_distance.aabb_max.z * 20)
+    colormap_tex = display_proxy.create_colormap_viridis()
+    particle_normalized_attr = dp.create_graphical((max_num_particles), 1)
 
-display_proxy.add_particle_shading_program(solver.particle_x,
-                                           particle_normalized_attr,
-                                           colormap_tex,
-                                           solver.particle_radius, solver)
-display_proxy.add_pile_shading_program(pile)
+    display_proxy.add_particle_shading_program(solver.particle_x,
+                                               particle_normalized_attr,
+                                               colormap_tex,
+                                               solver.particle_radius, solver)
+    display_proxy.add_pile_shading_program(pile)
 
 next_force_time = 0.0
 remaining_force_time = 0.0
@@ -342,7 +345,8 @@ while True:
                     rest_state_achieved = True
                 solver.step()
             dp.unmap_graphical_pointers()
-            display_proxy.draw()
+            if dp.has_display():
+                display_proxy.draw()
             print(
                 f"t = {unit.to_real_time(solver.t) } dt = {unit.to_real_time(solver.dt)} cfl = {solver.utilized_cfl} vrms={unit.to_real_velocity(v_rms)} max_v={unit.to_real_velocity(np.sqrt(solver.max_v2))} num solves = {solver.num_density_solve}"
             )
@@ -451,10 +455,12 @@ while True:
         do_nothing_score += do_nothing_reward
         obs_aggregated = new_obs_aggregated
 
-        solver.normalize(solver.particle_v, particle_normalized_attr, 0,
-                         unit.from_real_velocity(0.02))
+        if dp.has_display():
+            solver.normalize(solver.particle_v, particle_normalized_attr, 0,
+                             unit.from_real_velocity(0.02))
         dp.unmap_graphical_pointers()
-        display_proxy.draw()
+        if dp.has_display():
+            display_proxy.draw()
         if early_termination:
             break
     score_history.append(score)
