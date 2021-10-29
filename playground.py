@@ -13,12 +13,11 @@ import wandb
 import torch
 
 from ddpg_torch import DDPGAgent, OrnsteinUhlenbeckProcess, TD3, GaussianNoise
-from util import Unit, FluidSample, get_timestamp_and_hash
+from util import Unit, FluidSample, parameterize_kinematic_viscosity
 
 parser = argparse.ArgumentParser(description='RL playground')
 parser.add_argument('--seed', type=int, default=2021)
-parser.add_argument('--initial', type=str, default='')
-parser.add_argument('--output-dir', type=str, default='.')
+parser.add_argument('--cache-dir', type=str, default='.')
 parser.add_argument('--truth-dir', type=str, default='.')
 args = parser.parse_args()
 
@@ -33,6 +32,8 @@ def make_obs(dp, unit, truth_buoy_pile_real, usher_sampling, num_buoys):
     buoy_x_real = dp.coat(truth_buoy_pile_real.x).get()
     buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()
     buoy_q = dp.coat(truth_buoy_pile_real.q).get()
+    # TODO: add back omega
+    # TODO: convert quat to quat3
 
     sample_v_real = unit.to_real_velocity(usher_sampling.sample_data3.get())
     sample_density_relative = usher_sampling.sample_data1.get()
@@ -65,17 +66,15 @@ def make_obs(dp, unit, truth_buoy_pile_real, usher_sampling, num_buoys):
     return obs_aggregated
 
 
-def set_usher_param(usher, dp, unit, truth_buoy_pile_real, act_aggregated):
+def set_usher_param(usher, dp, unit, truth_buoy_pile_real, act_aggregated,
+                    num_buoys):
     # [0:3] [3:6] [6:9] displacement from buoy x
     # [9:12] [12:15] [15:18] velocity offset from buoy v
     # [18] focal dist
     # [19] usher kernel radius
     # [20] strength
-    xoffset_real = np.zeros((3, num_buoys, 3), dp.default_dtype)
-    voffset_real = np.zeros((3, num_buoys, 3), dp.default_dtype)
-    # xoffset_real = act_aggregated[:, 0:9].reshape(3, num_buoys,  3);
-    # voffset_real = act_aggregated[:, 9:18].reshape(3, num_buoys,  3);
-    # print(xoffset_real, voffset_real)
+    xoffset_real = act_aggregated[:, 0:9].reshape(3, num_buoys, 3)
+    voffset_real = act_aggregated[:, 9:18].reshape(3, num_buoys, 3)
     buoy_x_real = dp.coat(truth_buoy_pile_real.x).get()
     buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()
     focal_x_real = np.zeros_like(xoffset_real)
@@ -89,33 +88,13 @@ def set_usher_param(usher, dp, unit, truth_buoy_pile_real, act_aggregated):
     dp.coat(usher.focal_x).set(unit.from_real_length(focal_x_real))
     dp.coat(usher.focal_v).set(unit.from_real_velocity(focal_v_real))
 
-    dp.coat(usher.focal_dist).set(np.ones(num_buoys, dp.default_dtype) * 6)
-    # dp.coat(usher.focal_dist).set(unit.from_real_length(act_aggregated[:, 0]))
+    dp.coat(usher.focal_dist).set(unit.from_real_length(act_aggregated[:, 18]))
 
     dp.coat(usher.usher_kernel_radius).set(
-        np.ones(num_buoys, dp.default_dtype) * 2)
-    # dp.coat(usher.usher_kernel_radius).set(unit.from_real_length(np.ones(num_buoys, dp.default_dtype) * 0.04))
-    # dp.coat(usher.usher_kernel_radius).set(
-    #     unit.from_real_length(act_aggregated[:, 0]))
+        unit.from_real_length(act_aggregated[:, 19]))
 
-    # dp.coat(usher.drive_strength).set(np.ones(num_buoys, dp.default_dtype) * 2)
-    # DEBUG
     dp.coat(usher.drive_strength).set(
-        unit.from_real_angular_velocity(act_aggregated[:, 0]))
-    # dp.coat(usher.drive_strength).set(
-    #     unit.from_real_angular_velocity(np.ones_like(act_aggregated[:, 0]) * 100))
-
-    # print('buoy_x_real', buoy_x_real)
-    # print('xoffset_real', xoffset_real)
-    # print('focal_x', dp.coat(usher.focal_x).get())
-
-    # print('buoy_v_real', buoy_v_real)
-    # print('voffset_real', voffset_real)
-    # print('focal_v', dp.coat(usher.focal_v).get())
-
-    # print('focal_dist', dp.coat(usher.focal_dist).get())
-    # print('usher_kernel_radius', dp.coat(usher.usher_kernel_radius).get())
-    # print('drive_strength', dp.coat(usher.drive_strength).get())
+        unit.from_real_angular_velocity(act_aggregated[:, 20]))
 
 
 dp = al.Depot(np.float32)
@@ -142,90 +121,75 @@ cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 cn.boundary_epsilon = 1e-9
 cn.gravity = gravity
-cn.viscosity, cn.boundary_viscosity = unit.from_real_kinematic_viscosity(
-    np.array([2.049e-6, 6.532e-6]))
 
 # rigids
 max_num_contacts = 512
 pile = dp.Pile(dp, runner, max_num_contacts)
 
+## ================== using cube
+container_scale = 1.0
+container_option = ''
 container_width = unit.from_real_length(0.24)
 container_dim = dp.f3(container_width, container_width, container_width)
 container_mesh = al.Mesh()
 container_mesh.set_box(container_dim, 8)
 container_distance = dp.BoxDistance.create(container_dim, outset=0.46153312)
-pile.add(container_distance,
-         al.uint3(64, 64, 64),
-         sign=-1,
-         collision_mesh=container_mesh,
-         mass=0,
-         restitution=0.8,
-         friction=0.2,
-         inertia_tensor=dp.f3(1, 1, 1),
-         x=dp.f3(0, container_width / 2, 0),
-         q=dp.f4(0, 0, 0, 1),
-         display_mesh=al.Mesh())
+container_extent = container_distance.aabb_max - container_distance.aabb_min
+container_res_float = container_extent / particle_radius
+container_res = al.uint3(int(container_res_float.x),
+                         int(container_res_float.y),
+                         int(container_res_float.z))
+print('container_res', container_res)
+pile.add(
+    container_distance,
+    container_res,
+    # al.uint3(60, 60, 60),
+    sign=-1,
+    collision_mesh=container_mesh,
+    mass=0,
+    restitution=0.8,
+    friction=0.3)
+## ================== using cube
 
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
 cn.contact_tolerance = particle_radius
 
-block_mode = 0
-edge_factor = 0.49
-box_min = dp.f3((container_width - 2 * kernel_radius) * -edge_factor,
-                kernel_radius,
-                (container_width - kernel_radius * 2) * -edge_factor)
-box_max = dp.f3((container_width - 2 * kernel_radius) * edge_factor,
-                (container_width * 2 - kernel_radius * 4) * edge_factor,
-                (container_width - kernel_radius * 2) * edge_factor)
-fluid_mass = unit.from_real_mass(2.77235)
-num_particles = int(fluid_mass / cn.particle_mass)
-print('num_particles', num_particles)
-container_aabb_range = container_distance.aabb_max - container_distance.aabb_min
-container_aabb_range_per_h = container_aabb_range / kernel_radius
+container_aabb_range_per_h = container_extent / kernel_radius
 cni.grid_res = al.uint3(int(math.ceil(container_aabb_range_per_h.x)),
                         int(math.ceil(container_aabb_range_per_h.y)),
                         int(math.ceil(container_aabb_range_per_h.z))) + 4
 cni.grid_offset = al.int3(
-    -(int(cni.grid_res.x) // 2) - 2,
-    -int(math.ceil(container_distance.outset / kernel_radius)) - 1,
-    -(int(cni.grid_res.z) // 2) - 2)
+    int(container_distance.aabb_min.x) - 2,
+    int(container_distance.aabb_min.y) - 2,
+    int(container_distance.aabb_min.z) - 2)
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
-num_buoys = 8
-generating_initial = (len(args.initial) == 0)
+max_num_buoys = 9
+max_num_particles = 10000  # TODO: calculate
 solver = dp.SolverI(runner,
                     pile,
                     dp,
-                    num_particles,
-                    num_ushers=0 if generating_initial else num_buoys,
+                    max_num_particles,
+                    num_ushers=max_num_buoys,
                     enable_surface_tension=False,
                     enable_vorticity=False,
                     graphical=True)
-particle_normalized_attr = dp.create_graphical((num_particles), 1)
+particle_normalized_attr = dp.create_graphical((max_num_particles), 1)
 
-usher_sampling = FluidSample(dp, np.zeros((num_buoys, 3), dp.default_dtype))
+usher_sampling = FluidSample(dp, np.zeros((max_num_buoys, 3),
+                                          dp.default_dtype))
 
-solver.num_particles = num_particles
 solver.max_dt = unit.from_real_time(0.05 * unit.rl)
 solver.initial_dt = solver.max_dt
 solver.min_dt = 0
 solver.cfl = 0.4
 
-dp.map_graphical_pointers()
-if generating_initial:
-    runner.launch_create_fluid_block(solver.particle_x,
-                                     solver.num_particles,
-                                     offset=0,
-                                     particle_radius=particle_radius,
-                                     mode=block_mode,
-                                     box_min=box_min,
-                                     box_max=box_max)
-dp.unmap_graphical_pointers()
 display_proxy.set_camera(unit.from_real_length(al.float3(0, 0.06, 0.4)),
-                         unit.from_real_length(al.float3(0, 0.06, 0)))
-display_proxy.set_clip_planes(unit.to_real_length(1), box_max.z * 20)
+                         unit.from_real_length(al.float3(0, 0.0, 0)))
+display_proxy.set_clip_planes(unit.to_real_length(1),
+                              container_distance.aabb_max.z * 20)
 colormap_tex = display_proxy.create_colormap_viridis()
 
 display_proxy.add_particle_shading_program(solver.particle_x,
@@ -240,40 +204,19 @@ remaining_force_time = 0.0
 score_history = deque(maxlen=100)
 episode_id = 0
 
-timestamp_str, timestamp_hash = get_timestamp_and_hash()
-if generating_initial:
-    initial_directory = f'{args.output_dir}/reconinit-{timestamp_hash}-{timestamp_str}'
-    Path(initial_directory).mkdir(parents=True, exist_ok=True)
-
-    with open('switch', 'w') as f:
-        f.write('1')
-    while True:
-        dp.map_graphical_pointers()
-        with open('switch', 'r') as f:
-            if f.read(1) == '0':
-                solver.particle_x.write_file(f'{initial_directory}/x.alu',
-                                             solver.num_particles)
-                solver.particle_v.write_file(f'{initial_directory}/v.alu',
-                                             solver.num_particles)
-                solver.particle_pressure.write_file(
-                    f'{initial_directory}/pressure.alu', solver.num_particles)
-                pile.write_file(f'{initial_directory}/container_buoys.pile')
-                break
-        for frame_interstep in range(10):
-            solver.step()
-        dp.unmap_graphical_pointers()
-        display_proxy.draw()
-    sys.exit(0)
-
 ground_truth_dir_list = [
-    f.path for f in os.scandir(args.truth_dir) if f.is_dir()
+    '/home/kennychufk/workspace/pythonWs/test-run-al-outside/truth/rltruth-2b6bbb7a-1028.13.46.04',
+    '/home/kennychufk/workspace/pythonWs/test-run-al-outside/truth/rltruth-7b7d9b3c-1026.15.05.53',
+    '/home/kennychufk/workspace/pythonWs/test-run-al-outside/truth/rltruth-1313ed22-1026.19.16.09',
+    '/home/kennychufk/workspace/pythonWs/test-run-al-outside/truth/rltruth-d23ac540-1026.19.38.53',
+    '/home/kennychufk/workspace/pythonWs/test-run-al-outside/truth/rltruth-cff3a4f0-1026.18.33.28'
 ]
 
 truth_real_freq = 100.0
 truth_real_interval = 1.0 / truth_real_freq
 next_truth_frame_id = 0
 truth_buoy_pile_real = dp.Pile(dp, runner, 0)
-for i in range(num_buoys):
+for i in range(max_num_buoys):
     truth_buoy_pile_real.add(dp.SphereDistance.create(0), al.uint3(64, 64, 64))
 
 agent = TD3(
@@ -281,15 +224,21 @@ agent = TD3(
     critic_lr=3e-4,
     critic_weight_decay=0,
     obs_dim=33,
-    # act_dim=21,
-    act_dim=1,
+    act_dim=21,
     expl_noise_func=GaussianNoise(std_dev=0.1),
     gamma=0.95,
     # hidden_sizes=[2048, 1800],
-    min_action=np.array([0]),
-    max_action=np.array([1000]),
+    min_action=np.array([
+        -0.03, -0.03, -0.03, -0.03, -0.03, -0.03, -0.03, -0.03, -0.03, -0.01,
+        -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, 0.0, 0.06, 0
+    ]),
+    max_action=np.array([
+        +0.03, +0.03, +0.03, +0.03, +0.03, +0.03, +0.03, +0.03, +0.03, +0.01,
+        +0.01, +0.01, +0.01, +0.01, +0.01, +0.01, +0.01, +0.01, 0.12, 0.02,
+        1000
+    ]),
     learn_after=100000,
-    hidden_sizes=[600, 400],
+    hidden_sizes=[1024, 512],
     actor_final_scale=1,
     critic_final_scale=1,
     soft_update_rate=0.005,
@@ -322,19 +271,91 @@ while True:
     with open('switch', 'r') as f:
         if f.read(1) == '0':
             break
-    # dir_id = random.randrange(len(ground_truth_dir_list))
-    dir_id = 0
+    dir_id = random.randrange(len(ground_truth_dir_list))
     ground_truth_dir = ground_truth_dir_list[dir_id]
     print(dir_id, ground_truth_dir)
+
+    unit = Unit(
+        real_kernel_radius=0.020,
+        real_density0=np.load(f'{ground_truth_dir}/density0_real.npy').item(),
+        real_gravity=-9.80665)
+
+    cn.set_kernel_radius(kernel_radius)
+    cn.set_particle_attr(particle_radius, particle_mass, density0)
+    cn.boundary_epsilon = 1e-9
+    cn.gravity = gravity
+    cn.viscosity, cn.boundary_viscosity = unit.from_real_kinematic_viscosity(
+        parameterize_kinematic_viscosity(
+            np.load(
+                f'{ground_truth_dir}/kinematic_viscosity_real.npy').item()))
+
+    fluid_mass = unit.from_real_mass(
+        np.load(f'{ground_truth_dir}/fluid_mass.npy').item())
+    num_particles = int(fluid_mass / cn.particle_mass)
+    solver.num_particles = num_particles
+    print('num_particles', num_particles)
+
+    initial_particle_x_filename = f'{args.cache_dir}/x{num_particles}.alu'
+    initial_particle_v_filename = f'{args.cache_dir}/v{num_particles}.alu'
+    initial_particle_pressure_filename = f'{args.cache_dir}/pressure{num_particles}.alu'
+    if not Path(initial_particle_x_filename).is_file():
+        fluid_block_mode = 0
+        dp.map_graphical_pointers()
+        runner.launch_create_fluid_block(solver.particle_x,
+                                         solver.num_particles,
+                                         offset=0,
+                                         particle_radius=particle_radius,
+                                         mode=fluid_block_mode,
+                                         box_min=container_distance.aabb_min,
+                                         box_max=container_distance.aabb_max)
+        dp.unmap_graphical_pointers()
+        solver.t = 0
+        last_tranquillized = 0.0
+        rest_state_achieved = False
+        while not rest_state_achieved:
+            dp.map_graphical_pointers()
+            for frame_interstep in range(10):
+                v_rms = np.sqrt(
+                    runner.sum(solver.particle_cfl_v2, solver.num_particles) /
+                    solver.num_particles)
+                if unit.to_real_time(solver.t - last_tranquillized) > 0.45:
+                    solver.particle_v.set_zero()
+                    solver.reset_solving_var()
+                    last_tranquillized = solver.t
+                elif unit.to_real_time(solver.t - last_tranquillized
+                                       ) > 0.4 and unit.to_real_velocity(
+                                           v_rms) < 0.01:
+                    print("rest state achieved at",
+                          unit.to_real_time(solver.t))
+                    rest_state_achieved = True
+                solver.step()
+            dp.unmap_graphical_pointers()
+            display_proxy.draw()
+            print(
+                f"t = {unit.to_real_time(solver.t) } dt = {unit.to_real_time(solver.dt)} cfl = {solver.utilized_cfl} vrms={unit.to_real_velocity(v_rms)} max_v={unit.to_real_velocity(np.sqrt(solver.max_v2))} num solves = {solver.num_density_solve}"
+            )
+        dp.map_graphical_pointers()
+        solver.particle_x.write_file(initial_particle_x_filename,
+                                     solver.num_particles)
+        solver.particle_v.write_file(initial_particle_v_filename,
+                                     solver.num_particles)
+        solver.particle_pressure.write_file(initial_particle_pressure_filename,
+                                            solver.num_particles)
+        dp.unmap_graphical_pointers()
+    else:
+        dp.map_graphical_pointers()
+        solver.particle_x.read_file(initial_particle_x_filename)
+        solver.particle_v.read_file(initial_particle_v_filename)
+        solver.particle_pressure.read_file(initial_particle_pressure_filename)
+        dp.unmap_graphical_pointers()
+
+    solver.reset_solving_var()
+    solver.t = 0
     sampling = FluidSample(dp, f'{ground_truth_dir}/sample-x.alu')
     sampling.sample_x.scale(unit.from_real_length(1))
     dp.map_graphical_pointers()
-    solver.reset_solving_var()
-    solver.t = 0
-    solver.particle_x.read_file(f'{args.initial}/x.alu')
-    solver.particle_v.read_file(f'{args.initial}/v.alu')
-    solver.particle_pressure.read_file(f'{args.initial}/pressure.alu')
     solver.update_particle_neighbors()
+    num_buoys = dp.Pile.get_size_from_file(f'{ground_truth_dir}/0.pile') - 2
     truth_buoy_pile_real.read_file(f'{ground_truth_dir}/0.pile', num_buoys, 0,
                                    1)
     # set positions for sampling around buoys in simulation
@@ -350,10 +371,6 @@ while True:
                               num_buoys)
 
     dp.unmap_graphical_pointers()
-    # # clear usher
-    # initial_strength = np.zeros(num_buoys, dp.default_dtype)
-    # set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
-    #                 initial_strength)
 
     score = 0
     do_nothing_score = 0
@@ -376,17 +393,15 @@ while True:
                 act_aggregated[buoy_id] = agent.uniform_random_action()
         else:
             act_aggregated = agent.get_action(obs_aggregated)
-        if frame_id % 100 == 0:
-            print(frame_id, act_aggregated)
         if np.sum(np.isnan(act_aggregated)) > 0:
             print(obs_aggregated, act_aggregated)
             sys.exit(0)
         set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
-                        agent.actor.from_normalized_action(act_aggregated))
+                        agent.actor.from_normalized_action(act_aggregated),
+                        num_buoys)
         dp.map_graphical_pointers()
         while (solver.t < target_t):
             solver.step()
-        # print(frame_id)
         truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id+1}.pile',
                                        num_buoys, 0, 1)
         usher_sampling.prepare_neighbor_and_boundary(runner, solver)

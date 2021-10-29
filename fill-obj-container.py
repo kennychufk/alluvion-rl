@@ -527,9 +527,5 @@ while not rest_state_achieved or solver.t < target_t:
                      unit.from_real_velocity(0.01))
     dp.unmap_graphical_pointers()
     display_proxy.draw()
-    pixels = np.array(framebuffer.get(), dtype=np.byte)
-    pil_image = Image.fromarray(
-        pixels.reshape(framebuffer.height, framebuffer.width, 3), "RGB")
-    pil_image.save(f"{frame_directory}/preview.png")
 
 dp.remove(particle_normalized_attr)

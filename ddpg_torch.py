@@ -57,7 +57,7 @@ class ReplayBuffer:
         self.rew[self.ptr] = rew
         self.obs1[self.ptr] = obs1
         self.term[self.ptr] = 1 - done
-        if (self.size % 1000 == 0):
+        if (self.ptr % 10000 == 0):
             print('obs', obs0, obs1)
             print('act rew term', act, rew, self.term[self.ptr])
         self.ptr = (self.ptr + 1) % self.capacity
