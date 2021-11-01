@@ -29,7 +29,8 @@ torch.manual_seed(args.seed)
 
 
 # using real unit except density: which is relative to density0
-def make_obs(dp, unit, truth_buoy_pile_real, usher_sampling, num_buoys):
+def make_obs(dp, unit, kinematic_viscosity_real, truth_buoy_pile_real,
+             usher_sampling, num_buoys):
     obs_aggregated = np.zeros([num_buoys, agent.obs_dim], dp.default_dtype)
     buoy_x_real = dp.coat(truth_buoy_pile_real.x).get()
     buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()
@@ -63,7 +64,8 @@ def make_obs(dp, unit, truth_buoy_pile_real, usher_sampling, num_buoys):
              sample_density_relative[buoy_id],
              sample_vort_real[buoy_id].flatten(),
              sample_container_kernel_vol_grad_real[buoy_id].flatten(),
-             sample_container_kernel_vol[buoy_id].flatten()),
+             sample_container_kernel_vol[buoy_id].flatten(), unit.rdensity0 /
+             1000, kinematic_viscosity_real * 1e6, num_buoys / 9),
             axis=None)
     return obs_aggregated
 
@@ -230,7 +232,7 @@ max_strength = 5000
 agent = TD3(actor_lr=3e-4,
             critic_lr=3e-4,
             critic_weight_decay=0,
-            obs_dim=35,
+            obs_dim=38,
             act_dim=21,
             expl_noise_func=GaussianNoise(std_dev=0.1),
             gamma=0.95,
@@ -292,15 +294,15 @@ while True:
         real_kernel_radius=real_kernel_radius,
         real_density0=np.load(f'{ground_truth_dir}/density0_real.npy').item(),
         real_gravity=-9.80665)
+    kinematic_viscosity_real = np.load(
+        f'{ground_truth_dir}/kinematic_viscosity_real.npy').item()
 
     cn.set_kernel_radius(kernel_radius)
     cn.set_particle_attr(particle_radius, particle_mass, density0)
     cn.boundary_epsilon = 1e-9
     cn.gravity = gravity
     cn.viscosity, cn.boundary_viscosity = unit.from_real_kinematic_viscosity(
-        parameterize_kinematic_viscosity(
-            np.load(
-                f'{ground_truth_dir}/kinematic_viscosity_real.npy').item()))
+        parameterize_kinematic_viscosity(kinematic_viscosity_real))
 
     fluid_mass = unit.from_real_mass(
         np.load(f'{ground_truth_dir}/fluid_mass.npy').item())
@@ -382,8 +384,8 @@ while True:
     usher_sampling.sample_velocity(runner, solver)
     usher_sampling.sample_vorticity(runner, solver)
 
-    obs_aggregated = make_obs(dp, unit, truth_buoy_pile_real, usher_sampling,
-                              num_buoys)
+    obs_aggregated = make_obs(dp, unit, kinematic_viscosity_real,
+                              truth_buoy_pile_real, usher_sampling, num_buoys)
 
     dp.unmap_graphical_pointers()
 
@@ -423,8 +425,9 @@ while True:
         usher_sampling.sample_density(runner)
         usher_sampling.sample_velocity(runner, solver)
         usher_sampling.sample_vorticity(runner, solver)
-        new_obs_aggregated = make_obs(dp, unit, truth_buoy_pile_real,
-                                      usher_sampling, num_buoys)
+        new_obs_aggregated = make_obs(dp, unit, kinematic_viscosity_real,
+                                      truth_buoy_pile_real, usher_sampling,
+                                      num_buoys)
 
         # find reward
         sampling.prepare_neighbor_and_boundary(runner, solver)
