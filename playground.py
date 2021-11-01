@@ -390,12 +390,13 @@ while True:
     dp.unmap_graphical_pointers()
 
     score = 0
-    do_nothing_score = 0
 
     num_frames = 1000
     truth_real_freq = 100.0
     truth_real_interval = 1.0 / truth_real_freq
+    num_frames_in_scenario = 0
     for frame_id in range(num_frames - 1):
+        num_frames_in_scenario += 1
         target_t = unit.from_real_time(frame_id * truth_real_interval)
 
         truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id}.pile',
@@ -435,25 +436,26 @@ while True:
         simulation_v_real.scale(unit.to_real_velocity(1))
 
         ground_truth.read_file(f'{ground_truth_dir}/v-{frame_id+1}.alu')
-        reward = -runner.calculate_mse(
-            simulation_v_real, ground_truth, n=sampling.num_samples)
-        do_nothing_reward = -runner.calculate_mean_squared(
-            ground_truth, sampling.num_samples)
+        reconstruction_error = runner.calculate_mse(simulation_v_real,
+                                                    ground_truth,
+                                                    n=sampling.num_samples)
+        base = runner.calculate_mean_squared(ground_truth,
+                                             sampling.num_samples)
+        reward = -reconstruction_error / (base + 0.001)
         early_termination = False
-        if reward < do_nothing_reward * 10:
+        if reward < -5:
             print(f'early termination {reward} {do_nothing_reward}')
             early_termination = True
 
         for buoy_id in range(num_buoys):
             agent.remember(
-                obs_aggregated[buoy_id], act_aggregated[buoy_id], reward * 10,
+                obs_aggregated[buoy_id], act_aggregated[buoy_id], reward,
                 new_obs_aggregated[buoy_id],
                 int(early_termination or frame_id == (num_frames - 2)))
         if sample_step >= agent.learn_after:  # as memory size is num_buoys * sample_step
             agent.learn()
         sample_step += 1
         score += reward
-        do_nothing_score += do_nothing_reward
         obs_aggregated = new_obs_aggregated
 
         if dp.has_display():
@@ -464,15 +466,12 @@ while True:
             display_proxy.draw()
         if early_termination:
             break
+    score /= num_frames_in_scenario
     score_history.append(score)
 
     if episode_id % 50 == 0:
         agent.save_models(wandb.run.dir)
-    wandb.log({
-        'score': score,
-        'offset_score': (score - do_nothing_score),
-        'score100': np.mean(list(score_history))
-    })
+    wandb.log({'score': score, 'score100': np.mean(list(score_history))})
     dp.remove(ground_truth)
     sampling.destroy_variables()
     episode_id += 1
