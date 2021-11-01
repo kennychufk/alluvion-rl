@@ -118,7 +118,7 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
 
-real_kernel_radius = 0.015
+real_kernel_radius = 0.020
 unit = Unit(real_kernel_radius=real_kernel_radius,
             real_density0=1000,
             real_gravity=-9.80665)
@@ -227,7 +227,7 @@ max_voffset = 0.06
 max_focal_dist = 0.12
 min_usher_kernel_radius = 0.02
 max_usher_kernel_radius = 0.06
-max_strength = 5000
+max_strength = 4000
 
 agent = TD3(actor_lr=3e-4,
             critic_lr=3e-4,
@@ -251,7 +251,7 @@ agent = TD3(actor_lr=3e-4,
                 +max_voffset, +max_voffset, max_focal_dist,
                 max_usher_kernel_radius, max_strength
             ]),
-            learn_after=100000,
+            learn_after=1000000,
             hidden_sizes=[2048, 2048, 1024],
             actor_final_scale=1,
             critic_final_scale=1,
