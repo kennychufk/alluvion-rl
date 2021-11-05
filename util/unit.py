@@ -91,3 +91,9 @@ class Unit:
 
     def to_real_angular_acceleration(self, aa):
         return aa * (self.inv_rt * self.inv_rt)
+
+    def to_real_velocity_mse(self, e):
+        return e * (self.rl * self.rl * self.inv_rt * self.inv_rt)
+
+    def to_real_velocity_mse_per_kinematic_viscosity(self, derivative):
+        return derivative * self.inv_rt
