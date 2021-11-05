@@ -74,6 +74,16 @@ class ReplayBuffer:
             for v in selected_vectors
         ]
 
+    def save(self, containing_dir):
+        np.save(f'{containing_dir}/obs0.npy', self.obs0)
+        np.save(f'{containing_dir}/act.npy', self.act)
+        np.save(f'{containing_dir}/rew.npy', self.rew)
+        np.save(f'{containing_dir}/obs1.npy', self.obs1)
+        np.save(f'{containing_dir}/term.npy', self.term)
+        np.save(f'{containing_dir}/capacity.npy', self.capacity)
+        np.save(f'{containing_dir}/size.npy', self.size)
+        np.save(f'{containing_dir}/ptr.npy', self.ptr)
+
 
 class MLPCritic(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):

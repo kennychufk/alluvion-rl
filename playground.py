@@ -36,7 +36,6 @@ def make_obs(dp, unit, kinematic_viscosity_real, truth_buoy_pile_real,
     buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()
     buoy_q = dp.coat(truth_buoy_pile_real.q).get()
     buoy_q3 = get_quat3(buoy_q)
-    buoy_omega = dp.coat(truth_buoy_pile_real.omega).get()
 
     sample_v_real = unit.to_real_velocity(usher_sampling.sample_data3.get())
     sample_density_relative = usher_sampling.sample_data1.get()
@@ -57,7 +56,7 @@ def make_obs(dp, unit, kinematic_viscosity_real, truth_buoy_pile_real,
         dist_sort_index = np.argsort(d2)[1:]
 
         obs_aggregated[buoy_id] = np.concatenate(
-            (xi, buoy_v_real[buoy_id], buoy_q3[buoy_id], buoy_omega[buoy_id],
+            (xi, buoy_v_real[buoy_id], buoy_q3[buoy_id],
              xij[dist_sort_index[0]], vi - buoy_v_real[dist_sort_index[0]],
              xij[dist_sort_index[1]], vi - buoy_v_real[dist_sort_index[1]],
              sample_v_real[buoy_id].flatten(),
@@ -222,17 +221,17 @@ truth_buoy_pile_real = dp.Pile(dp, runner, 0)
 for i in range(max_num_buoys):
     truth_buoy_pile_real.add(dp.SphereDistance.create(0), al.uint3(64, 64, 64))
 
-max_xoffset = 0.08
-max_voffset = 0.06
+max_xoffset = 0.05
+max_voffset = 0.04
 max_focal_dist = 0.12
 min_usher_kernel_radius = 0.02
 max_usher_kernel_radius = 0.06
-max_strength = 4000
+max_strength = 1000
 
 agent = TD3(actor_lr=3e-4,
             critic_lr=3e-4,
             critic_weight_decay=0,
-            obs_dim=38,
+            obs_dim=35,
             act_dim=21,
             expl_noise_func=GaussianNoise(std_dev=0.1),
             gamma=0.95,
@@ -251,7 +250,8 @@ agent = TD3(actor_lr=3e-4,
                 +max_voffset, +max_voffset, max_focal_dist,
                 max_usher_kernel_radius, max_strength
             ]),
-            learn_after=1000000,
+            learn_after=4000000,
+            replay_size=36000000,
             hidden_sizes=[2048, 2048, 1024],
             actor_final_scale=1,
             critic_final_scale=1,
@@ -281,12 +281,15 @@ wandb.watch(agent.critic)
 with open('switch', 'w') as f:
     f.write('1')
 sample_step = 0
+dir_id = 0
+dumped_buffer = False
 while True:
     with open('switch', 'r') as f:
         if f.read(1) == '0':
             break
-    dir_id = 0 if args.block_scan else random.randrange(
-        len(ground_truth_dir_list))
+    # dir_id = 0 if args.block_scan else random.randrange(
+    #     len(ground_truth_dir_list))
+    dir_id = (dir_id + 1) % len(ground_truth_dir_list)
     ground_truth_dir = ground_truth_dir_list[dir_id]
     print(dir_id, ground_truth_dir)
 
@@ -453,6 +456,9 @@ while True:
                 new_obs_aggregated[buoy_id],
                 int(early_termination or frame_id == (num_frames - 2)))
         if sample_step >= agent.learn_after:  # as memory size is num_buoys * sample_step
+            if not dumped_buffer:
+                agent.memory.save('buffer-dump')
+                dumped_buffer = True
             agent.learn()
         sample_step += 1
         score += reward
