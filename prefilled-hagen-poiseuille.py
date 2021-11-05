@@ -7,15 +7,14 @@ import alluvion as al
 import numpy as np
 from numpy import linalg as LA
 from pathlib import Path
-import scipy.special as sc
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from optim import AdamOptim
-from util import Unit, FluidSample
+from util import Unit, FluidSample, OptimSampling
+from analytic import approximate_half_life, developing_hagen_poiseuille, acceleration_from_terminal_velocity, calculate_terminal_velocity, pressurize
 
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-from matplotlib import patheffects as path_effects
 
 import wandb
 
@@ -24,90 +23,6 @@ parser = argparse.ArgumentParser(description='Hagen poiseuille initializer')
 parser.add_argument('pos', metavar='x', type=str, nargs=1)
 parser.add_argument('--display', metavar='d', type=bool, default=False)
 args = parser.parse_args()
-
-
-def approximate_half_life(kinematic_viscosity, pipe_radius):
-    j0_zero = sc.jn_zeros(0, 1)[0]
-    return np.log(2) / (kinematic_viscosity * j0_zero * j0_zero / pipe_radius /
-                        pipe_radius)
-
-
-def developing_hagen_poiseuille(r, t, kinematic_viscosity, a, pipe_radius,
-                                num_iterations):
-    j0_zeros = sc.jn_zeros(0, num_iterations)
-    accumulation = np.zeros_like(r)
-    for m in range(num_iterations):
-        j0_zero = j0_zeros[m]
-        j0_zero_ratio = j0_zero / pipe_radius
-        j0_zero_ratio_sqr = j0_zero_ratio * j0_zero_ratio
-
-        constant_part = 1 / (j0_zero * j0_zero * j0_zero * sc.jv(1, j0_zero))
-        r_dependent_part = sc.jv(0, j0_zero_ratio * r)
-        time_dependent_part = np.exp(-kinematic_viscosity * t *
-                                     j0_zero_ratio_sqr)
-        accumulation += constant_part * r_dependent_part * time_dependent_part
-    return a / kinematic_viscosity * (
-        0.25 * (pipe_radius * pipe_radius - r * r) -
-        pipe_radius * pipe_radius * 2 * accumulation)
-
-
-def acceleration_from_terminal_velocity(terminal_v, kinematic_viscosity,
-                                        pipe_radius):
-    return terminal_v * 4 * kinematic_viscosity / (pipe_radius * pipe_radius)
-
-
-def calculate_terminal_velocity(kinematic_viscosity, pipe_radius,
-                                accelerations):
-    return 0.25 * accelerations * pipe_radius * pipe_radius / kinematic_viscosity
-
-
-class OptimSampling(FluidSample):
-    def __init__(self, dp, pipe_length, pipe_radius, ts, num_particles):
-        self.ts = ts
-        self.num_sections = 14
-        self.num_rotations = 16
-        self.num_rs = 16  # should be even number
-        self.num_particles = num_particles
-
-        # r contains 0 but not pipe_radius
-        self.rs = pipe_radius / self.num_rs * np.arange(self.num_rs)
-
-        num_samples = self.num_rs * self.num_sections * self.num_rotations
-        sample_x_host = np.zeros((num_samples, 3), dp.default_dtype)
-        section_length = pipe_length / self.num_sections
-        offset_y_per_rotation = section_length / self.num_rotations
-        theta_per_rotation = np.pi * 2 / self.num_rotations
-        for i in range(num_samples):
-            section_id = i // (self.num_rs * self.num_rotations)
-            rotation_id = (i // self.num_rs) % (self.num_rotations)
-            r_id = i % self.num_rs
-            theta = theta_per_rotation * rotation_id
-            sample_x_host[i] = np.array([
-                self.rs[r_id] * np.cos(theta),
-                pipe_length * -0.5 + section_length * section_id +
-                offset_y_per_rotation * rotation_id,
-                self.rs[r_id] * np.sin(theta)
-            ], dp.default_dtype)
-        super().__init__(dp, sample_x_host)
-        self.reset()
-
-    def reset(self):
-        self.sampling_cursor = 0
-        self.vx = np.zeros((len(self.ts), self.num_rs), self.dp.default_dtype)
-        self.density = np.zeros((len(self.ts), self.num_rs),
-                                self.dp.default_dtype)
-        self.r_stat = np.zeros((len(self.ts), self.num_particles),
-                               self.dp.default_dtype)
-        self.density_stat = np.zeros((len(self.ts), self.num_particles),
-                                     self.dp.default_dtype)
-
-    def aggregate(self):
-        sample_vx = self.sample_data3.get().reshape(-1, self.num_rs, 3)[..., 1]
-        self.vx[self.sampling_cursor] = np.mean(sample_vx, axis=0)
-
-        density_ungrouped = self.sample_data1.get().reshape(-1, self.num_rs)
-        self.density[self.sampling_cursor] = np.mean(density_ungrouped, axis=0)
-        self.sampling_cursor += 1
 
 
 class TemporalStat:
@@ -125,27 +40,6 @@ class TemporalStat:
             if key not in self.temporal_dict:
                 self.temporal_dict[key] = []
             self.temporal_dict[key].append(kwargs[key])
-
-
-def pressurize(dp, solver, osampling):
-    next_sample_t = osampling.ts[osampling.sampling_cursor]
-    if solver.t + solver.max_dt >= next_sample_t:
-        remainder_dt = next_sample_t - solver.t
-        original_dt = solver.max_dt
-        solver.max_dt = solver.min_dt = solver.initial_dt = remainder_dt
-        solver.step_wrap1()
-        solver.max_dt = solver.min_dt = solver.initial_dt = original_dt
-        osampling.prepare_neighbor_and_boundary_wrap1(runner, solver)
-        osampling.sample_vector3(runner, solver, solver.particle_v)
-        osampling.sample_density(runner)
-        osampling.density_stat[osampling.sampling_cursor] = dp.coat(
-            solver.particle_density).get()
-        osampling.r_stat[osampling.sampling_cursor] = LA.norm(dp.coat(
-            solver.particle_x).get()[:, [0, 2]],
-                                                              axis=1)
-        osampling.aggregate()
-    else:
-        solver.step_wrap1()
 
 
 def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
@@ -349,12 +243,18 @@ def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
                     accelerations)
         plot_summary(iteration, summary, unit)
         param_names = ['vis', 'bvis']
-        log_object = {'loss': loss, '|∇|': LA.norm(grad)}
+        log_object = {
+            'loss': unit.to_real_velocity_mse(loss),
+            '|∇|':
+            LA.norm(unit.to_real_velocity_mse_per_kinematic_viscosity(grad))
+        }
         for param_id, param_value in enumerate(current_x):
             log_object[param_names[param_id]] = param_value
             log_object[param_names[param_id] +
                        '_real'] = unit.to_real_kinematic_viscosity(param_value)
-            log_object['∇' + param_names[param_id]] = grad[param_id]
+            log_object['∇' + param_names[
+                param_id]] = unit.to_real_velocity_mse_per_kinematic_viscosity(
+                    grad[param_id])
         wandb.log(log_object)
     ## finalize
     subprocess.Popen(make_animate_command(".alcache/%d.png",
@@ -518,6 +418,7 @@ config.pipe_mode_radius_real = unit.to_real_length(pipe_model_radius)
 config.precision = str(dp.default_dtype)
 config.Re = pipe_radius * pipe_radius * pipe_radius * 0.25 / kinematic_viscosity / kinematic_viscosity * accelerations
 print('Re', config.Re)
+print('dt real', unit.to_real_time(solver.initial_dt))
 config.lr = adam.lr
 config.initial_dt = solver.initial_dt
 config.max_dt = solver.max_dt

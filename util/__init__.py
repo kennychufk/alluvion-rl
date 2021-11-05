@@ -1,5 +1,5 @@
 from .unit import Unit
-from .fluid_sample import FluidSample
+from .fluid_sample import FluidSample, OptimSampling
 from .timestamp import get_timestamp_and_hash
 from .buoy_spec import BuoySpec
 from .parameterize_viscosity import parameterize_kinematic_viscosity

@@ -91,3 +91,52 @@ class FluidSample:
             solver.pile.x_device, solver.pile.v_device,
             solver.pile.omega_device, self.num_samples)
         return self.sample_vort
+
+
+class OptimSampling(FluidSample):
+    def __init__(self, dp, pipe_length, pipe_radius, ts, num_particles):
+        self.ts = ts
+        self.num_sections = 14
+        self.num_rotations = 16
+        self.num_rs = 16  # should be even number
+        self.num_particles = num_particles
+
+        # r contains 0 but not pipe_radius
+        self.rs = pipe_radius / self.num_rs * np.arange(self.num_rs)
+
+        num_samples = self.num_rs * self.num_sections * self.num_rotations
+        sample_x_host = np.zeros((num_samples, 3), dp.default_dtype)
+        section_length = pipe_length / self.num_sections
+        offset_y_per_rotation = section_length / self.num_rotations
+        theta_per_rotation = np.pi * 2 / self.num_rotations
+        for i in range(num_samples):
+            section_id = i // (self.num_rs * self.num_rotations)
+            rotation_id = (i // self.num_rs) % (self.num_rotations)
+            r_id = i % self.num_rs
+            theta = theta_per_rotation * rotation_id
+            sample_x_host[i] = np.array([
+                self.rs[r_id] * np.cos(theta),
+                pipe_length * -0.5 + section_length * section_id +
+                offset_y_per_rotation * rotation_id,
+                self.rs[r_id] * np.sin(theta)
+            ], dp.default_dtype)
+        super().__init__(dp, sample_x_host)
+        self.reset()
+
+    def reset(self):
+        self.sampling_cursor = 0
+        self.vx = np.zeros((len(self.ts), self.num_rs), self.dp.default_dtype)
+        self.density = np.zeros((len(self.ts), self.num_rs),
+                                self.dp.default_dtype)
+        self.r_stat = np.zeros((len(self.ts), self.num_particles),
+                               self.dp.default_dtype)
+        self.density_stat = np.zeros((len(self.ts), self.num_particles),
+                                     self.dp.default_dtype)
+
+    def aggregate(self):
+        sample_vx = self.sample_data3.get().reshape(-1, self.num_rs, 3)[..., 1]
+        self.vx[self.sampling_cursor] = np.mean(sample_vx, axis=0)
+
+        density_ungrouped = self.sample_data1.get().reshape(-1, self.num_rs)
+        self.density[self.sampling_cursor] = np.mean(density_ungrouped, axis=0)
+        self.sampling_cursor += 1
