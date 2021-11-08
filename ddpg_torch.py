@@ -74,6 +74,16 @@ class ReplayBuffer:
             for v in selected_vectors
         ]
 
+    def load(self, containing_dir):
+        self.obs0 = np.load(f'{containing_dir}/obs0.npy')
+        self.act = np.load(f'{containing_dir}/act.npy')
+        self.rew = np.load(f'{containing_dir}/rew.npy')
+        self.obs1 = np.load(f'{containing_dir}/obs1.npy')
+        self.term = np.load(f'{containing_dir}/term.npy')
+        self.capacity = np.load(f'{containing_dir}/capacity.npy').item()
+        self.size = np.load(f'{containing_dir}/size.npy').item()
+        self.ptr = np.load(f'{containing_dir}/ptr.npy').item()
+
     def save(self, containing_dir):
         np.save(f'{containing_dir}/obs0.npy', self.obs0)
         np.save(f'{containing_dir}/act.npy', self.act)

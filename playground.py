@@ -20,7 +20,8 @@ parser.add_argument('--seed', type=int, default=2021)
 parser.add_argument('--cache-dir', type=str, default='.')
 parser.add_argument('--truth-dir', type=str, required=True)
 parser.add_argument('--display', metavar='d', type=bool, default=False)
-parser.add_argument('--block-scan', metavar='d', type=bool, default=False)
+parser.add_argument('--block-scan', metavar='s', type=bool, default=False)
+parser.add_argument('--replay-buffer', type=str, default='')
 args = parser.parse_args()
 
 np.random.seed(args.seed)
@@ -223,10 +224,10 @@ for i in range(max_num_buoys):
 
 max_xoffset = 0.05
 max_voffset = 0.04
-max_focal_dist = 0.12
+max_focal_dist = 0.20
 min_usher_kernel_radius = 0.02
 max_usher_kernel_radius = 0.06
-max_strength = 1000
+max_strength = 4000
 
 agent = TD3(actor_lr=3e-4,
             critic_lr=3e-4,
@@ -257,6 +258,8 @@ agent = TD3(actor_lr=3e-4,
             critic_final_scale=1,
             soft_update_rate=0.005,
             batch_size=256)
+if len(args.replay_buffer) > 0:
+    agent.memory.load(args.replay_buffer)
 wandb.init(project='alluvion-rl')
 config = wandb.config
 config.actor_lr = agent.actor_lr
@@ -277,12 +280,14 @@ config.learn_after = agent.learn_after
 config.seed = args.seed
 
 wandb.watch(agent.critic)
+if len(args.replay_buffer) > 0:
+    agent.learn_after = 0
 
 with open('switch', 'w') as f:
     f.write('1')
 sample_step = 0
 dir_id = 0
-dumped_buffer = False
+dumped_buffer = (len(args.replay_buffer) > 0)
 while True:
     with open('switch', 'r') as f:
         if f.read(1) == '0':
@@ -447,7 +452,7 @@ while True:
         reward = -reconstruction_error / (base + 0.001)
         early_termination = False
         if reward < -5:
-            print(f'early termination {reward} {do_nothing_reward}')
+            print(f'early termination {reward}')
             early_termination = True
 
         for buoy_id in range(num_buoys):
@@ -477,7 +482,10 @@ while True:
 
     if episode_id % 50 == 0:
         agent.save_models(wandb.run.dir)
-    wandb.log({'score': score, 'score100': np.mean(list(score_history))})
+    log_object = {'score': score}
+    if len(score_history) == score_history.maxlen:
+        log_object['score100'] = np.mean(list(score_history))
+    wandb.log(log_object)
     dp.remove(ground_truth)
     sampling.destroy_variables()
     episode_id += 1
