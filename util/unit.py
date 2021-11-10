@@ -95,5 +95,8 @@ class Unit:
     def to_real_velocity_mse(self, e):
         return e * (self.rl * self.rl * self.inv_rt * self.inv_rt)
 
+    def from_real_velocity_mse(self, e):
+        return e * (self.inv_rl * self.inv_rl * self.rt * self.rt)
+
     def to_real_velocity_mse_per_kinematic_viscosity(self, derivative):
         return derivative * self.inv_rt

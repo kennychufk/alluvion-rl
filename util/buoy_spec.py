@@ -24,7 +24,9 @@ class BuoySpec:
         self.dp = dp
         self.inset = 0.403  # found empirically to match buoyant force
 
-    def create_distance(self):
-        return self.dp.CylinderDistance.create(self.radius - self.inset,
-                                               self.height - self.inset * 2,
+    def create_distance(self, inset=None):
+        if inset is None:
+            inset = self.inset
+        return self.dp.CylinderDistance.create(self.radius - inset,
+                                               self.height - inset * 2,
                                                self.comy)

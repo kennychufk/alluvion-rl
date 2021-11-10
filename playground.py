@@ -22,6 +22,7 @@ parser.add_argument('--truth-dir', type=str, required=True)
 parser.add_argument('--display', metavar='d', type=bool, default=False)
 parser.add_argument('--block-scan', metavar='s', type=bool, default=False)
 parser.add_argument('--replay-buffer', type=str, default='')
+parser.add_argument('--validate-model', type=str, default='')
 args = parser.parse_args()
 
 np.random.seed(args.seed)
@@ -211,8 +212,23 @@ remaining_force_time = 0.0
 score_history = deque(maxlen=100)
 episode_id = 0
 
+# ground_truth_dir_list = [
+#     f.path for f in os.scandir(args.truth_dir) if f.is_dir()
+# ]
+
 ground_truth_dir_list = [
-    f.path for f in os.scandir(args.truth_dir) if f.is_dir()
+    f"{args.truth_dir}/rltruth-1313ed22-1026.19.16.09",
+    f"{args.truth_dir}/rltruth-27e78d56-1026.13.28.06",
+    f"{args.truth_dir}/rltruth-48d51866-1026.12.46.58",
+    f"{args.truth_dir}/rltruth-55255d89-1026.13.08.31",
+    f"{args.truth_dir}/rltruth-5e06f1b4-1026.13.44.59",
+    f"{args.truth_dir}/rltruth-69937a1e-1027.19.15.09",
+    f"{args.truth_dir}/rltruth-7b7d9b3c-1026.15.05.53",
+    f"{args.truth_dir}/rltruth-9447355f-1026.16.57.36",
+    f"{args.truth_dir}/rltruth-c2276efc-1026.14.08.03",
+    f"{args.truth_dir}/rltruth-cff3a4f0-1026.18.33.28",
+    f"{args.truth_dir}/rltruth-d23ac540-1026.19.38.53",
+    f"{args.truth_dir}/rltruth-d4a620c3-1026.12.17.12"
 ]
 
 truth_real_freq = 100.0
@@ -260,6 +276,9 @@ agent = TD3(actor_lr=3e-4,
             batch_size=256)
 if len(args.replay_buffer) > 0:
     agent.memory.load(args.replay_buffer)
+validation_mode = (len(args.validate_model) > 0)
+if validation_mode:
+    agent.load_models(args.validate_model)
 wandb.init(project='alluvion-rl')
 config = wandb.config
 config.actor_lr = agent.actor_lr
@@ -376,8 +395,13 @@ while True:
     solver.reset_solving_var()
     solver.t = 0
     sampling = FluidSample(dp, f'{ground_truth_dir}/sample-x.alu')
+    mask = dp.create_coated((sampling.num_samples), 1, np.uint32)
     sampling.sample_x.scale(unit.from_real_length(1))
     ground_truth = dp.create_coated_like(sampling.sample_data3)
+    sum_v2 = unit.from_real_velocity_mse(
+        np.load(f'{ground_truth_dir}/sum_v2.npy').item())
+    max_v2 = unit.from_real_velocity_mse(
+        np.load(f'{ground_truth_dir}/max_v2.npy').item())
     dp.map_graphical_pointers()
     solver.update_particle_neighbors()
     num_buoys = dp.Pile.get_size_from_file(f'{ground_truth_dir}/0.pile') - 2
@@ -398,10 +422,17 @@ while True:
     dp.unmap_graphical_pointers()
 
     score = 0
+    error_sum = 0
 
     num_frames = 1000
     truth_real_freq = 100.0
     truth_real_interval = 1.0 / truth_real_freq
+
+    visual_real_freq = 30.0
+    visual_real_interval = 1.0 / visual_real_freq
+    next_visual_frame_id = 0
+    visual_x_scaled = dp.create_coated_like(solver.particle_x)
+
     num_frames_in_scenario = 0
     for frame_id in range(num_frames - 1):
         num_frames_in_scenario += 1
@@ -418,7 +449,8 @@ while True:
             for buoy_id in range(num_buoys):
                 act_aggregated[buoy_id] = agent.uniform_random_action()
         else:
-            act_aggregated = agent.get_action(obs_aggregated)
+            act_aggregated = agent.get_action(obs_aggregated,
+                                              enable_noise=not validation_mode)
         if np.sum(np.isnan(act_aggregated)) > 0:
             print(obs_aggregated, act_aggregated)
             sys.exit(0)
@@ -428,6 +460,18 @@ while True:
         dp.map_graphical_pointers()
         while (solver.t < target_t):
             solver.step()
+            if validation_mode and solver.t >= unit.from_real_time(
+                    next_visual_frame_id * visual_real_interval):
+                visual_x_scaled.set_from(solver.particle_x)
+                visual_x_scaled.scale(unit.to_real_length(1))
+                visual_x_scaled.write_file(
+                    f'val/visual-x-{next_visual_frame_id}.alu',
+                    solver.num_particles)
+                pile.write_file(f'val/visual-{next_visual_frame_id}.pile',
+                                unit.to_real_length(1),
+                                unit.to_real_velocity(1),
+                                unit.to_real_angular_velocity(1))
+                next_visual_frame_id += 1
         truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id+1}.pile',
                                        num_buoys, 0, 1)
         usher_sampling.prepare_neighbor_and_boundary(runner, solver)
@@ -444,29 +488,34 @@ while True:
         simulation_v_real.scale(unit.to_real_velocity(1))
 
         ground_truth.read_file(f'{ground_truth_dir}/v-{frame_id+1}.alu')
-        reconstruction_error = runner.calculate_mse(simulation_v_real,
-                                                    ground_truth,
-                                                    n=sampling.num_samples)
-        base = runner.calculate_mean_squared(ground_truth,
-                                             sampling.num_samples)
-        reward = -reconstruction_error / (base + 0.001)
+        mask.read_file(f'{ground_truth_dir}/mask-{frame_id+1}.alu')
+        reconstruction_error = runner.calculate_mse_masked(
+            simulation_v_real, ground_truth, mask, sampling.num_samples)
+        reward = -reconstruction_error / max_v2
+        error_sum += reconstruction_error
         early_termination = False
         if reward < -5:
             print(f'early termination {reward}')
             early_termination = True
 
-        for buoy_id in range(num_buoys):
-            agent.remember(
-                obs_aggregated[buoy_id], act_aggregated[buoy_id], reward,
-                new_obs_aggregated[buoy_id],
-                int(early_termination or frame_id == (num_frames - 2)))
-        if sample_step >= agent.learn_after:  # as memory size is num_buoys * sample_step
-            if not dumped_buffer:
-                agent.memory.save('buffer-dump')
-                dumped_buffer = True
-            agent.learn()
+        if not validation_mode:
+            for buoy_id in range(num_buoys):
+                agent.remember(
+                    obs_aggregated[buoy_id], act_aggregated[buoy_id], reward,
+                    new_obs_aggregated[buoy_id],
+                    int(early_termination or frame_id == (num_frames - 2)))
+            if sample_step >= agent.learn_after:  # as memory size is num_buoys * sample_step
+                if not dumped_buffer:
+                    agent.memory.save('buffer-dump')
+                    dumped_buffer = True
+                agent.learn()
+        else:
+            # NOTE: Saving all required data for animation. Only for validating a single scenario.
+            simulation_v_real.write_file(f'val/v-{frame_id}.alu',
+                                         sampling.num_samples)
+            np.save(f'val/reward-{frame_id}.npy', reward)
+
         sample_step += 1
-        score += reward
         obs_aggregated = new_obs_aggregated
 
         if dp.has_display():
@@ -477,17 +526,23 @@ while True:
             display_proxy.draw()
         if early_termination:
             break
-    score /= num_frames_in_scenario
+    score = -error_sum / sum_v2
     score_history.append(score)
 
-    if episode_id % 50 == 0:
-        agent.save_models(wandb.run.dir)
+    if not validation_mode and episode_id % 50 == 0:
+        save_dir = f"{wandb.run.dir}/{episode_id}"
+        os.mkdir(save_dir)
+        agent.save_models(save_dir)
     log_object = {'score': score}
     if len(score_history) == score_history.maxlen:
         log_object['score100'] = np.mean(list(score_history))
     wandb.log(log_object)
+    if validation_mode:
+        np.save('val/score.npy', score)
     dp.remove(ground_truth)
     sampling.destroy_variables()
     episode_id += 1
     if args.block_scan:
+        break
+    if validation_mode:
         break
