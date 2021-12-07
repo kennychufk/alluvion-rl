@@ -8,6 +8,7 @@ class BuoySpec:
         self.height = unit.from_real_length(38.5e-3)
         self.mass = unit.from_real_mass(1.06e-3)  # TODO: randomize
         self.comy = unit.from_real_length(-8.852102803738316e-3)
+        self.coil_center = unit.from_real_length(-10.75e-3)
         self.volume = self.radius * self.radius * np.pi * self.height
         # self.neutral_buoyant_force = -self.volume * density0 * gravity.y
         self.mesh = al.Mesh()

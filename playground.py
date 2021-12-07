@@ -13,7 +13,7 @@ import wandb
 import torch
 
 from ddpg_torch import DDPGAgent, OrnsteinUhlenbeckProcess, TD3, GaussianNoise
-from util import Unit, FluidSample, parameterize_kinematic_viscosity, get_obs_dim, get_act_dim, make_obs, set_usher_param
+from util import Unit, FluidSample, parameterize_kinematic_viscosity, get_obs_dim, get_act_dim, make_obs, set_usher_param, get_coil_x_from_com, BuoySpec
 
 parser = argparse.ArgumentParser(description='RL playground')
 parser.add_argument('--seed', type=int, default=2021)
@@ -84,6 +84,7 @@ pile.add(
     restitution=0.8,
     friction=0.3)
 ## ================== using cube
+buoy_spec = BuoySpec(dp, unit)
 
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
@@ -194,7 +195,7 @@ agent = TD3(actor_lr=3e-4,
                 +max_voffset, +max_voffset, max_focal_dist,
                 max_usher_kernel_radius, max_strength
             ]),
-            learn_after=4000000,
+            learn_after=10000,
             replay_size=36000000,
             hidden_sizes=[2048, 2048, 1024],
             actor_final_scale=1,
@@ -334,17 +335,19 @@ while True:
     num_buoys = dp.Pile.get_size_from_file(f'{ground_truth_dir}/0.pile') - 2
     truth_buoy_pile_real.read_file(f'{ground_truth_dir}/0.pile', num_buoys, 0,
                                    1)
+    coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
+                                      truth_buoy_pile_real)
     # set positions for sampling around buoys in simulation
-    truth_buoy_x_np = unit.from_real_length(
-        dp.coat(truth_buoy_pile_real.x).get())
-    usher_sampling.sample_x.set(truth_buoy_x_np)
+    coil_x_np = unit.from_real_length(coil_x_real)
+    usher_sampling.sample_x.set(coil_x_np)
     usher_sampling.prepare_neighbor_and_boundary(runner, solver)
     usher_sampling.sample_density(runner)
     usher_sampling.sample_velocity(runner, solver)
     usher_sampling.sample_vorticity(runner, solver)
 
     obs_aggregated = make_obs(dp, unit, kinematic_viscosity_real,
-                              truth_buoy_pile_real, usher_sampling, num_buoys)
+                              truth_buoy_pile_real, coil_x_real,
+                              usher_sampling, num_buoys)
 
     dp.unmap_graphical_pointers()
 
@@ -367,9 +370,10 @@ while True:
 
         truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id}.pile',
                                        num_buoys, 0, 1)
-        truth_buoy_x_np = unit.from_real_length(
-            dp.coat(truth_buoy_pile_real.x).get())
-        usher_sampling.sample_x.set(truth_buoy_x_np)
+        coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
+                                          truth_buoy_pile_real)
+        coil_x_np = unit.from_real_length(coil_x_real)
+        usher_sampling.sample_x.set(coil_x_np)
 
         if sample_step < agent.learn_after:
             act_aggregated = np.zeros((num_buoys, agent.act_dim))
@@ -382,6 +386,7 @@ while True:
             print(obs_aggregated, act_aggregated)
             sys.exit(0)
         set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
+                        coil_x_real,
                         agent.actor.from_normalized_action(act_aggregated),
                         num_buoys)
         dp.map_graphical_pointers()
@@ -401,13 +406,18 @@ while True:
                 next_visual_frame_id += 1
         truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id+1}.pile',
                                        num_buoys, 0, 1)
+        coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
+                                          truth_buoy_pile_real)
+        coil_x_np = unit.from_real_length(coil_x_real)
+        usher_sampling.sample_x.set(
+            coil_x_np)  # NOTE: should set to new sampling points?
         usher_sampling.prepare_neighbor_and_boundary(runner, solver)
         usher_sampling.sample_density(runner)
         usher_sampling.sample_velocity(runner, solver)
         usher_sampling.sample_vorticity(runner, solver)
         new_obs_aggregated = make_obs(dp, unit, kinematic_viscosity_real,
-                                      truth_buoy_pile_real, usher_sampling,
-                                      num_buoys)
+                                      truth_buoy_pile_real, coil_x_real,
+                                      usher_sampling, num_buoys)
 
         # find reward
         sampling.prepare_neighbor_and_boundary(runner, solver)
