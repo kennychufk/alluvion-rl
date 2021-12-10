@@ -19,7 +19,7 @@ matplotlib.use('Agg')
 piv_dir_name = sys.argv[1]
 containing_dir = f'/media/kennychufk/vol1bk0/{piv_dir_name}/'
 pos = np.load(f'{containing_dir}/mat_results/pos.npy')
-vel = np.load(f'{containing_dir}/mat_results/vel_filtered.npy')
+vel = np.load(f'{containing_dir}/mat_results/vel_original.npy')
 
 image_dim = 1024
 calxy = np.load(f'{containing_dir}/calxy.npy').item()
@@ -44,10 +44,16 @@ cmap = sns.color_palette("vlag", as_cmap=True)
 piv_freq = 500.0
 robot_freq = 200.0
 
+is_stirrer = True
+if is_stirrer:
+    with open(f"{containing_dir}/robot-time-offset") as f:
+        piv_offset = int(f.read())
+        print('offset =', piv_offset)
+
 
 def render_field(containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap):
     my_dpi = 128
-    robot_tid = int(frame_id / piv_freq * robot_freq)
+    robot_tid = int((frame_id + piv_offset) / piv_freq * robot_freq)
     if robot_tid >= 4000:
         robot_tid = 3999
     source_img_filename = f"{containing_dir}/{frame_prefix}{frame_id+1:06d}.tif"
@@ -103,6 +109,9 @@ def render_field(containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap):
                       mag[mask],
                       cmap=cmap,
                       scale=5)
+    agitator_x_pix = (agitator_x[robot_tid] + offset_x) / calxy
+    if 0 <= agitator_x_pix and agitator_x_pix < image_dim:
+        img_ax.vlines(agitator_x_pix, 0, image_dim - 1)
     fig.savefig(f'{containing_dir}/gridfield/{frame_id}.png', dpi=my_dpi)
     plt.close('all')
 
