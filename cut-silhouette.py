@@ -73,6 +73,8 @@ zero3.set_zero()
 
 sum_v_norm_sqr = 0
 max_v_norm_sqr = 0
+sum_v_norm = 0
+max_v_norm = 0
 for frame_id in range(args.num_frames):
     pile.read_file(f'{args.truth_dir}/{frame_id}.pile')
     sampling.sample_data1.read_file(f'{args.truth_dir}/density-{frame_id}.alu')
@@ -89,11 +91,20 @@ for frame_id in range(args.num_frames):
                     sampling.num_samples)
     v_norm_sqr = runner.calculate_mse_masked(sampling.sample_data3, zero3,
                                              mask, sampling.num_samples)
-    print('v_norm_sqr', v_norm_sqr, mask.get())
+    v_norm = runner.calculate_mae_masked(sampling.sample_data3, zero3, mask,
+                                         sampling.num_samples)
+    # print('v_norm_sqr', v_norm_sqr, mask.get())
     if v_norm_sqr > max_v_norm_sqr:
         max_v_norm_sqr = v_norm_sqr
+    if v_norm > max_v_norm:
+        max_v_norm = v_norm
     sum_v_norm_sqr += v_norm_sqr
+    sum_v_norm += v_norm
 print('max_v2', max_v_norm_sqr)
 print('sum_v2', sum_v_norm_sqr)
+print('max_v', max_v_norm)
+print('sum_v', sum_v_norm)
 np.save(f'{args.truth_dir}/sum_v2.npy', sum_v_norm_sqr)
 np.save(f'{args.truth_dir}/max_v2.npy', max_v_norm_sqr)
+np.save(f'{args.truth_dir}/sum_v.npy', sum_v_norm)
+np.save(f'{args.truth_dir}/max_v.npy', max_v_norm)

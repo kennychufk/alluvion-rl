@@ -298,6 +298,11 @@ class TD3:
         self.actor.train()
         return mu
 
+    def get_value(self, state, action):
+        return self.critic.forward(
+            torch.tensor(state, dtype=torch.float).to(torch.device('cuda')),
+            torch.tensor(action, dtype=torch.float).to(torch.device('cuda')))
+
     def remember(self, obs0, act, rew, obs1, done):
         self.memory.store(obs0, act, rew, obs1, done)
 

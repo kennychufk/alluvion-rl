@@ -385,10 +385,10 @@ while True:
         if np.sum(np.isnan(act_aggregated)) > 0:
             print(obs_aggregated, act_aggregated)
             sys.exit(0)
+        act_aggregated_converted = agent.actor.from_normalized_action(
+            act_aggregated)
         set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
-                        coil_x_real,
-                        agent.actor.from_normalized_action(act_aggregated),
-                        num_buoys)
+                        coil_x_real, act_aggregated_converted, num_buoys)
         dp.map_graphical_pointers()
         while (solver.t < target_t):
             solver.step()
@@ -448,6 +448,14 @@ while True:
                 agent.learn()
         else:
             # NOTE: Saving all required data for animation. Only for validating a single scenario.
+            np.save(f'val/act-{frame_id}.npy', act_aggregated_converted)
+            np.save(f'val/obs-{frame_id}.npy', obs_aggregated)
+            buoys_q0, buoys_q1 = agent.get_value(obs_aggregated,
+                                                 act_aggregated)
+            np.save(f'val/value0-{frame_id}.npy',
+                    buoys_q0.cpu().detach().numpy())
+            np.save(f'val/value1-{frame_id}.npy',
+                    buoys_q1.cpu().detach().numpy())
             simulation_v_real.write_file(f'val/v-{frame_id}.alu',
                                          sampling.num_samples)
             np.save(f'val/reward-{frame_id}.npy', reward)
@@ -467,7 +475,8 @@ while True:
     score_history.append(score)
 
     if not validation_mode and episode_id % 50 == 0:
-        save_dir = f"{wandb.run.dir}/{episode_id}"
+        save_dir = f"artifacts/{wandb.run.dir}/models/{episode_id}"
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
         os.mkdir(save_dir)
         agent.save_models(save_dir)
     log_object = {'score': score}
