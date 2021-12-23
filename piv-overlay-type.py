@@ -37,7 +37,9 @@ robot_frames = pd.read_csv(
     names=['tid', 'j0', 'j1', 'j2', 'j3', 'j4', 'j5', 'x', 'y', 'z', 'v'])
 agitator_x = robot_frames['y'].to_numpy() / 1000.0
 
-frame_prefix = piv_dir_name
+hyphen_position = piv_dir_name.find('-')
+frame_prefix = piv_dir_name if hyphen_position < 0 else piv_dir_name[:
+                                                                     hyphen_position]
 
 cmap = sns.color_palette("vlag", as_cmap=True)
 
@@ -114,10 +116,13 @@ def render_field(containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap):
         img_ax.vlines(agitator_x_pix, 0, image_dim - 1)
     fig.savefig(f'{containing_dir}/gridfield/{frame_id}.png', dpi=my_dpi)
     plt.close('all')
+    return mask
 
 
 os.makedirs(f'{containing_dir}/gridfield', exist_ok=True)
 num_frames = len(vel)
-Parallel(n_jobs=8)(delayed(render_field)(containing_dir, frame_prefix,
-                                         frame_id, pix_x, pix_y, cmap)
-                   for frame_id in range(num_frames))
+masks = Parallel(n_jobs=8)(delayed(render_field)(containing_dir, frame_prefix,
+                                                 frame_id, pix_x, pix_y, cmap)
+                           for frame_id in range(num_frames))
+np.save(f'{containing_dir}/mat_results/mask.npy',
+        np.array(masks).astype(np.uint32))

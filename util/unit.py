@@ -70,6 +70,12 @@ class Unit:
     def to_real_time(self, t):
         return t * self.rt
 
+    def from_real_frequency(self, t):
+        return t * self.rt
+
+    def to_real_frequency(self, t):
+        return t * self.inv_rt
+
     def from_real_density(self, rho):
         return rho * self.inv_rdensity0
 

@@ -1,4 +1,5 @@
 import numpy as np
+from numpy import linalg as LA
 
 
 def get_quat3(q):
@@ -6,10 +7,11 @@ def get_quat3(q):
     qy = q[..., 1]
     qz = q[..., 2]
     qw = q[..., 3]
-    q3w = np.sqrt(1 - qx * qx - qz * qz)
-    q3x = (qw * qx + qy * qz) / q3w
-    q3z = (-qx * qy + qz * qw) / q3w
-    return np.stack((q3x, q3z, q3w), axis=-1)
+    q3w = 1 - qx * qx - qz * qz
+    q3x = qw * qx + qy * qz
+    q3z = -qx * qy + qz * qw
+    q3 = np.stack((q3x, q3z, q3w), axis=-1)
+    return q3 / np.repeat(LA.norm(q3, axis=-1), 3).reshape(-1, 3)
 
 
 def rotate_using_quaternion(v, q):
