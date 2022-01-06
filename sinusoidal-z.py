@@ -25,7 +25,6 @@ display_proxy = dp.get_display_proxy() if args.display else None
 runner = dp.Runner()
 
 particle_radius = 0.25
-spacing = 0.259967967091019859280982201077
 kernel_radius = 1.0
 density0 = 1.0
 cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radius
@@ -75,25 +74,17 @@ pile.add(
     restitution=0.8,
     friction=0.3)
 
-piv_real_freq = 500.0
-robot_real_freq = 200.0
-piv_real_interval = 1.0 / piv_real_freq
-interpolator = RigidInterpolator(
-    dp, unit, '/media/kennychufk/vol1bk0/20210409_141511/Trace07.csv')
-robot_sim_shift_real = dp.f3(0.52, container_width_real * 0.5 - 0.4479564, 0)
-robot_sim_shift = unit.from_real_length(robot_sim_shift_real)
-robot_time_offset = read_file_int(
-    f'{args.truth_dir}/robot-time-offset') / piv_real_freq
-pile.x[0] = interpolator.get_x(robot_time_offset) + robot_sim_shift
-
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
 
-block_mode = 2
+block_mode = 0
 box_min = dp.f3(container_width * -0.5, 0, container_width * -0.5)
 box_max = dp.f3(container_width * 0.5, container_width, container_width * 0.5)
 fluid_block_capacity = dp.Runner.get_fluid_block_num_particles(
-    mode=block_mode, box_min=box_min, box_max=box_max, particle_radius=spacing)
+    mode=block_mode,
+    box_min=box_min,
+    box_max=box_max,
+    particle_radius=particle_radius)
 liquid_mass = unit.from_real_mass(
     read_file_float(f'{args.truth_dir}/mass.txt'))
 num_particles = int(liquid_mass / particle_mass)
@@ -115,20 +106,11 @@ cni.grid_res = grid_res
 cni.grid_offset = grid_offset
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
-margin_multiple = 3
-cn.set_hcp_grid(
-    cni, container_distance.aabb_min + pile.x[0] +
-    unit.from_real_length(dp.f3(-0.05, -0.05, -0.05)) * margin_multiple,
-    container_distance.aabb_max + pile.x[0] +
-    unit.from_real_length(dp.f3(0.05, 0.05, 0.05)) * margin_multiple, spacing)
 
-cn.density_ghost_threshold = cn.density0 * 0.94
 solver = dp.SolverI(runner,
                     pile,
                     dp,
                     num_particles,
-                    max_num_provisional_ghosts=num_particles * 10,
-                    max_num_ghosts=num_particles * 5,
                     num_ushers=0,
                     enable_surface_tension=False,
                     enable_vorticity=False,
@@ -136,11 +118,8 @@ solver = dp.SolverI(runner,
 if args.display:
     particle_normalized_attr = dp.create_graphical_like(
         solver.particle_density)
-solver.relax_rate = 1.0
-solver.num_ghost_relaxation = 40
-solver.ghost_fluid_density_threshold = cn.density0 * 0.9
 solver.num_particles = num_particles
-solver.max_dt = unit.from_real_time(0.05 * unit.rl)
+solver.max_dt = unit.from_real_time(0.1 * unit.rl)
 solver.initial_dt = solver.max_dt
 solver.min_dt = 0
 solver.cfl = 0.4
@@ -150,7 +129,7 @@ dp.map_graphical_pointers()
 runner.launch_create_fluid_block(solver.particle_x,
                                  num_particles,
                                  offset=0,
-                                 particle_radius=spacing,
+                                 particle_radius=particle_radius,
                                  mode=block_mode,
                                  box_min=box_min,
                                  box_max=box_max)
@@ -167,6 +146,17 @@ if args.display:
                                                colormap_tex,
                                                solver.particle_radius, solver)
 
+piv_real_freq = 500.0
+robot_real_freq = 200.0
+piv_real_interval = 1.0 / piv_real_freq
+interpolator = RigidInterpolator(
+    dp, unit, '/media/kennychufk/vol1bk0/20210409_141511/Trace07.csv')
+robot_sim_shift_real = dp.f3(0.52, container_width_real * 0.5 - 0.4479564, 0)
+robot_sim_shift = unit.from_real_length(robot_sim_shift_real)
+robot_time_offset = read_file_int(
+    f'{args.truth_dir}/robot-time-offset') / piv_real_freq
+pile.x[0] = interpolator.get_x(robot_time_offset) + robot_sim_shift
+
 rest_state_achieved = False
 last_tranquillized = 0.0
 rest_state_achieved = False
@@ -176,29 +166,22 @@ while not rest_state_achieved:
         v_rms = np.sqrt(
             runner.sum(solver.particle_cfl_v2, solver.num_particles) /
             solver.num_particles)
-        sufficient_time_after_tranquilizing = unit.to_real_time(
-            solver.t - last_tranquillized) > 0.4
         if unit.to_real_time(solver.t - last_tranquillized) > 0.45:
             solver.max_dt = unit.from_real_time(0.18 * unit.rl)
             solver.particle_v.set_zero()
             solver.reset_solving_var()
             last_tranquillized = solver.t
-        elif sufficient_time_after_tranquilizing and unit.to_real_velocity(
-                v_rms) < 0.06:
+        elif unit.to_real_time(
+                solver.t - last_tranquillized) > 0.4 and unit.to_real_velocity(
+                    v_rms) < 0.037:
             print("rest state achieved at", unit.to_real_time(solver.t))
             rest_state_achieved = True
         solver.step()
-    if dp.has_display():
-        solver.normalize(solver.particle_density, particle_normalized_attr,
-                         cn.density0 * 0.5, cn.density0 * 1.1)
     dp.unmap_graphical_pointers()
     if dp.has_display():
-        tmp_num_ghosts = solver.num_ghosts
-        solver.num_ghosts = tmp_num_ghosts // 2
         display_proxy.draw()
-        solver.num_ghosts = tmp_num_ghosts
     print(
-        f"{int(sufficient_time_after_tranquilizing)} t = {unit.to_real_time(solver.t) } dt = {unit.to_real_time(solver.dt)} cfl = {solver.utilized_cfl} vrms={unit.to_real_velocity(v_rms)} max_v={unit.to_real_velocity(np.sqrt(solver.max_v2))} num solves = {solver.num_density_solve}"
+        f"t = {unit.to_real_time(solver.t) } dt = {unit.to_real_time(solver.dt)} cfl = {solver.utilized_cfl} vrms={unit.to_real_velocity(v_rms)} max_v={unit.to_real_velocity(np.sqrt(solver.max_v2))} num solves = {solver.num_density_solve}"
     )
 
 for dummy_itr in range(1):
@@ -271,10 +254,8 @@ for dummy_itr in range(1):
         sim_errors[frame_id] = mse_yz
 
         if dp.has_display():
-            # solver.normalize(solver.particle_v, particle_normalized_attr, 0,
-            #                  unit.from_real_velocity(0.02))
-            solver.normalize(solver.particle_density, particle_normalized_attr,
-                             cn.density0 * 0.5, cn.density0 * 1.1)
+            solver.normalize(solver.particle_v, particle_normalized_attr, 0,
+                             unit.from_real_velocity(0.02))
         dp.unmap_graphical_pointers()
 
     np.save(f'{str(save_dir_piv)}/sim_v_real.npy', sim_v_np)
