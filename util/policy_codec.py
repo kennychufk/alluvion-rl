@@ -1,4 +1,5 @@
 import numpy as np
+from numpy import linalg as LA
 from .quaternion import get_quat3, rotate_using_quaternion
 
 
@@ -10,9 +11,9 @@ def get_act_dim():
     return 21
 
 
-def get_coil_x_from_com(dp, unit, buoy_spec, truth_buoy_pile_real):
-    buoy_x_real = dp.coat(truth_buoy_pile_real.x).get()
-    buoy_q = dp.coat(truth_buoy_pile_real.q).get()
+def get_coil_x_from_com(dp, unit, buoy_spec, truth_buoy_pile_real, num_buoys):
+    buoy_x_real = dp.coat(truth_buoy_pile_real.x).get()[:num_buoys]
+    buoy_q = dp.coat(truth_buoy_pile_real.q).get()[:num_buoys]
     shift_to_coil_center = rotate_using_quaternion(
         np.array([
             0,
@@ -26,8 +27,8 @@ def get_coil_x_from_com(dp, unit, buoy_spec, truth_buoy_pile_real):
 def make_obs(dp, unit, kinematic_viscosity_real, truth_buoy_pile_real,
              coil_x_real, usher_sampling, num_buoys):
     obs_aggregated = np.zeros([num_buoys, get_obs_dim()], dp.default_dtype)
-    buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()
-    buoy_q = dp.coat(truth_buoy_pile_real.q).get()
+    buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()[:num_buoys]
+    buoy_q = dp.coat(truth_buoy_pile_real.q).get()[:num_buoys]
     buoy_q3 = get_quat3(buoy_q)
 
     sample_v_real = unit.to_real_velocity(usher_sampling.sample_data3.get())
@@ -65,28 +66,28 @@ def make_obs(dp, unit, kinematic_viscosity_real, truth_buoy_pile_real,
 def set_usher_param(usher, dp, unit, truth_buoy_pile_real, coil_x_real,
                     act_aggregated, num_buoys):
     # [0:3] [3:6] [6:9] displacement from buoy x
+    xoffset_real = act_aggregated[:, 0:9].reshape(num_buoys, 3, 3)
     # [9:12] [12:15] [15:18] velocity offset from buoy v
+    voffset_real = act_aggregated[:, 9:18].reshape(num_buoys, 3, 3)
     # [18] focal dist
+    focal_dist = act_aggregated[:, 18]
     # [19] usher kernel radius
+    usher_kernel_radius = act_aggregated[:, 19]
     # [20] strength
-    xoffset_real = act_aggregated[:, 0:9].reshape(3, num_buoys, 3)
-    voffset_real = act_aggregated[:, 9:18].reshape(3, num_buoys, 3)
-    buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()
-    focal_x_real = np.zeros_like(xoffset_real)
-    focal_v_real = np.zeros_like(voffset_real)
-    for buoy_id in range(num_buoys):
-        focal_x_real[:,
-                     buoy_id] = xoffset_real[:, buoy_id] + coil_x_real[buoy_id]
-        focal_v_real[:,
-                     buoy_id] = voffset_real[:, buoy_id] + buoy_v_real[buoy_id]
+    strength = act_aggregated[:, 20]
+
+    buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()[:num_buoys]
+
+    focal_x_real = np.tile(coil_x_real, 3).reshape(-1, 3, 3) + xoffset_real
+    focal_v_real = np.tile(buoy_v_real, 3).reshape(-1, 3, 3) + voffset_real
 
     dp.coat(usher.focal_x).set(unit.from_real_length(focal_x_real))
     dp.coat(usher.focal_v).set(unit.from_real_velocity(focal_v_real))
 
-    dp.coat(usher.focal_dist).set(unit.from_real_length(act_aggregated[:, 18]))
+    dp.coat(usher.focal_dist).set(unit.from_real_length(focal_dist))
 
     dp.coat(usher.usher_kernel_radius).set(
-        unit.from_real_length(act_aggregated[:, 19]))
+        unit.from_real_length(usher_kernel_radius))
 
     dp.coat(usher.drive_strength).set(
-        unit.from_real_angular_velocity(act_aggregated[:, 20]))
+        unit.from_real_angular_velocity(strength))

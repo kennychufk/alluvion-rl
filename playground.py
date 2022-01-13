@@ -171,7 +171,7 @@ max_voffset = 0.04
 max_focal_dist = 0.20
 min_usher_kernel_radius = 0.02
 max_usher_kernel_radius = 0.06
-max_strength = 4000
+max_strength = 720
 
 agent = TD3(actor_lr=3e-4,
             critic_lr=3e-4,
@@ -336,7 +336,7 @@ while True:
     truth_buoy_pile_real.read_file(f'{ground_truth_dir}/0.pile', num_buoys, 0,
                                    1)
     coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
-                                      truth_buoy_pile_real)
+                                      truth_buoy_pile_real, num_buoys)
     # set positions for sampling around buoys in simulation
     coil_x_np = unit.from_real_length(coil_x_real)
     usher_sampling.sample_x.set(coil_x_np)
@@ -371,7 +371,7 @@ while True:
         truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id}.pile',
                                        num_buoys, 0, 1)
         coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
-                                          truth_buoy_pile_real)
+                                          truth_buoy_pile_real, num_buoys)
         coil_x_np = unit.from_real_length(coil_x_real)
         usher_sampling.sample_x.set(coil_x_np)
 
@@ -407,7 +407,7 @@ while True:
         truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id+1}.pile',
                                        num_buoys, 0, 1)
         coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
-                                          truth_buoy_pile_real)
+                                          truth_buoy_pile_real, num_buoys)
         coil_x_np = unit.from_real_length(coil_x_real)
         usher_sampling.sample_x.set(
             coil_x_np)  # NOTE: should set to new sampling points?
@@ -475,9 +475,8 @@ while True:
     score_history.append(score)
 
     if not validation_mode and episode_id % 50 == 0:
-        save_dir = f"artifacts/{wandb.run.dir}/models/{episode_id}"
+        save_dir = f"artifacts/{wandb.run.id}/models/{episode_id}"
         Path(save_dir).mkdir(parents=True, exist_ok=True)
-        os.mkdir(save_dir)
         agent.save_models(save_dir)
     log_object = {'score': score}
     if len(score_history) == score_history.maxlen:

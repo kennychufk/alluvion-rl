@@ -106,3 +106,11 @@ class Unit:
 
     def to_real_velocity_mse_per_kinematic_viscosity(self, derivative):
         return derivative * self.inv_rt
+
+    def from_real_pressure(self, p):
+        return p * (self.inv_rdensity0 * self.inv_rl * self.inv_rl * self.rt *
+                    self.rt)
+
+    def to_real_pressure(self, p):
+        return p * (self.rdensity0 * self.rl * self.rl * self.inv_rt *
+                    self.inv_rt)
