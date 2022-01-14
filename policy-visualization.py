@@ -15,11 +15,14 @@ from joblib import Parallel, delayed
 matplotlib.use('Agg')
 
 
-def render_policy(containing_dir, frame_prefix, action_all, frame_id,
+def render_policy(containing_dir, frame_prefix, action_all, val_all, frame_id,
                   num_frames_100):
     max_xoffset = 0.05
+    max_voffset = 0.04
     max_focal_dist = 0.2
-    max_strength = 4000
+    min_usher_kernel_radius = 0.02
+    max_usher_kernel_radius = 0.06
+    max_strength = 720
     my_dpi = 128
     frame_id_100 = int(frame_id / 30 * 100)
     source_img_filename = f"{containing_dir}/{frame_prefix}{frame_id}.png"
@@ -40,14 +43,14 @@ def render_policy(containing_dir, frame_prefix, action_all, frame_id,
     focal_point_ax.set_xlim(-max_xoffset, max_xoffset)
     focal_point_ax.set_ylim(-max_xoffset, max_xoffset)
     focal_point_ax.set_zlim(-max_xoffset, max_xoffset)
+    # focal_point_ax.set_xlim(-max_voffset, max_voffset)
+    # focal_point_ax.set_ylim(-max_voffset, max_voffset)
+    # focal_point_ax.set_zlim(-max_voffset, max_voffset)
     action = action_all[frame_id_100]
-    points = action[:, :3]
     #     buoy_focal_
     for buoy_id in range(len(action)):
         points = np.zeros((4, 3))
-        points[0] = action[buoy_id, 0:3]
-        points[1] = action[buoy_id, 6:9]
-        points[2] = action[buoy_id, 12:15]
+        points[:3] = action[buoy_id, 0:9].reshape(3, 3)
         points[3] = points[0]
         focal_point_ax.plot(points[:, 0],
                             points[:, 1],
@@ -65,10 +68,20 @@ def render_policy(containing_dir, frame_prefix, action_all, frame_id,
         [frame_id_100 + half_window_frame + 1, num_frames_100])
     t = (np.arange(plot_range_start, plot_range_end)) / 100
     strength_ax.set_ylim(0, max_strength)
+    # strength_ax.set_ylim(min_usher_kernel_radius, max_usher_kernel_radius)
+    # strength_ax.set_ylim(0, max_focal_dist)
+    # strength_ax.set_ylim(np.min(val_all), np.max(val_all))
     strength_ax.set_xlim(plot_range_start / 100, plot_range_end / 100)
     for buoy_id in range(len(action)):
-        strength_ax.plot(
-            t, action_all[plot_range_start:plot_range_end, buoy_id, 20])
+        # for buoy_id in range(1):
+        strength_ax.plot(t, action_all[plot_range_start:plot_range_end,
+                                       buoy_id, 18])  # focal_dist
+        strength_ax.plot(t, action_all[plot_range_start:plot_range_end,
+                                       buoy_id, 20])  # strength
+        # strength_ax.plot(
+        #     t, val_all[plot_range_start:plot_range_end, buoy_id, 0])
+        # strength_ax.plot(
+        #     t, val_all[plot_range_start:plot_range_end, buoy_id, 1])
 
     fig.savefig(f'{containing_dir}/overlay{frame_id}.png', dpi=my_dpi)
     plt.close('all')
@@ -81,12 +94,15 @@ val_dir = '/home/kennychufk/workspace/pythonWs/alluvion-optim/val'
 num_frames_100 = 999
 action_dim = np.load(f'{val_dir}/act-0.npy').shape
 action_all = np.zeros((num_frames_100, *action_dim))
+val_all = np.zeros((num_frames_100, action_dim[0], 2))
 for i in range(num_frames_100):
     action_all[i] = np.load(f'{val_dir}/act-{i}.npy')
+    val_all[i, :, 0] = np.load(f'{val_dir}/value0-{i}.npy').flatten()
+    val_all[i, :, 1] = np.load(f'{val_dir}/value1-{i}.npy').flatten()
 
 num_frames = 300
 Parallel(n_jobs=8)(
     delayed(render_policy)(render_image_dir, render_image_prefix, action_all,
-                           frame_id, num_frames_100)
+                           val_all, frame_id, num_frames_100)
     # for frame_id in range(186, 187))
     for frame_id in range(num_frames))

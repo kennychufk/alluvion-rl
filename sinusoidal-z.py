@@ -25,6 +25,7 @@ display_proxy = dp.get_display_proxy() if args.display else None
 runner = dp.Runner()
 
 particle_radius = 0.25
+spacing = 0.259967967091019859280982201077
 kernel_radius = 1.0
 density0 = 1.0
 cubical_particle_volume = 8 * particle_radius * particle_radius * particle_radius
@@ -77,14 +78,11 @@ pile.add(
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
 
-block_mode = 0
+block_mode = 2
 box_min = dp.f3(container_width * -0.5, 0, container_width * -0.5)
 box_max = dp.f3(container_width * 0.5, container_width, container_width * 0.5)
 fluid_block_capacity = dp.Runner.get_fluid_block_num_particles(
-    mode=block_mode,
-    box_min=box_min,
-    box_max=box_max,
-    particle_radius=particle_radius)
+    mode=block_mode, box_min=box_min, box_max=box_max, particle_radius=spacing)
 liquid_mass = unit.from_real_mass(
     read_file_float(f'{args.truth_dir}/mass.txt'))
 num_particles = int(liquid_mass / particle_mass)
@@ -129,7 +127,7 @@ dp.map_graphical_pointers()
 runner.launch_create_fluid_block(solver.particle_x,
                                  num_particles,
                                  offset=0,
-                                 particle_radius=particle_radius,
+                                 particle_radius=spacing,
                                  mode=block_mode,
                                  box_min=box_min,
                                  box_max=box_max)
@@ -167,7 +165,7 @@ while not rest_state_achieved:
             runner.sum(solver.particle_cfl_v2, solver.num_particles) /
             solver.num_particles)
         if unit.to_real_time(solver.t - last_tranquillized) > 0.45:
-            solver.max_dt = unit.from_real_time(0.18 * unit.rl)
+            solver.max_dt = unit.from_real_time(0.05 * unit.rl)
             solver.particle_v.set_zero()
             solver.reset_solving_var()
             last_tranquillized = solver.t
@@ -177,6 +175,9 @@ while not rest_state_achieved:
             print("rest state achieved at", unit.to_real_time(solver.t))
             rest_state_achieved = True
         solver.step()
+        if dp.has_display():
+            solver.normalize(solver.particle_pressure,
+                             particle_normalized_attr, 0, 10)
     dp.unmap_graphical_pointers()
     if dp.has_display():
         display_proxy.draw()
@@ -254,8 +255,8 @@ for dummy_itr in range(1):
         sim_errors[frame_id] = mse_yz
 
         if dp.has_display():
-            solver.normalize(solver.particle_v, particle_normalized_attr, 0,
-                             unit.from_real_velocity(0.02))
+            solver.normalize(solver.particle_pressure,
+                             particle_normalized_attr, 0, 10)
         dp.unmap_graphical_pointers()
 
     np.save(f'{str(save_dir_piv)}/sim_v_real.npy', sim_v_np)
