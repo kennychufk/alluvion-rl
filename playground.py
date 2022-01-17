@@ -431,7 +431,9 @@ while True:
         reward = -reconstruction_error / max_v2
         error_sum += reconstruction_error
         early_termination = False
-        if reward < -5:
+        has_out_of_grid = dp.coat(solver.has_out_of_grid).get()[0]
+        if reward < -3 or has_out_of_grid > 0:
+            reward -= 3
             print(f'early termination {reward}')
             early_termination = True
 

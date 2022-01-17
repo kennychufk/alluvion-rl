@@ -165,7 +165,7 @@ while not rest_state_achieved:
             runner.sum(solver.particle_cfl_v2, solver.num_particles) /
             solver.num_particles)
         if unit.to_real_time(solver.t - last_tranquillized) > 0.45:
-            solver.max_dt = unit.from_real_time(0.05 * unit.rl)
+            solver.max_dt = unit.from_real_time(0.20 * unit.rl)
             solver.particle_v.set_zero()
             solver.reset_solving_var()
             last_tranquillized = solver.t
