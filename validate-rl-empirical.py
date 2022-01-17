@@ -12,23 +12,20 @@ from sklearn.metrics import mean_squared_error
 import torch
 
 from ddpg_torch import TD3, GaussianNoise
-from util import Unit, FluidSample, parameterize_kinematic_viscosity, get_obs_dim, get_act_dim, make_obs, set_usher_param
+from util import Unit, FluidSample, parameterize_kinematic_viscosity, BuoyInterpolator, get_obs_dim, get_act_dim, make_obs, set_usher_param
 from util import get_timestamp_and_hash
 from util import read_file_int, read_file_float
 
 
-def set_pile_from_np(dp, im_real_interval, truth_buoy_pile_real,
-                     buoy_trajectories, num_buoys, frame_id):
-    for buoy_id in range(num_buoys):
-        record = buoy_trajectories[buoy_id][frame_id]
-        truth_buoy_pile_real.x[buoy_id] = dp.f3(*record['x'])
-        truth_buoy_pile_real.q[buoy_id] = dp.f4(*record['q'])
-        if frame_id > 0:
-            record_before = buoy_trajectories[buoy_id][frame_id - 1]
-            v = (record['x'] - record_before['x']) / im_real_interval
-            truth_buoy_pile_real.v[buoy_id] = dp.f3(*v)
-        else:
-            truth_buoy_pile_real.v[buoy_id] = dp.f3(0, 0, 0)
+def set_pile_from_interpolators(truth_buoy_pile_real, buoy_interpolators,
+                                t_real):
+    for buoy_id in range(truth_buoy_pile_real.get_size()):
+        truth_buoy_pile_real.x[buoy_id] = buoy_interpolators[buoy_id].get_x(
+            t_real)
+        truth_buoy_pile_real.q[buoy_id] = buoy_interpolators[buoy_id].get_q(
+            t_real)
+        truth_buoy_pile_real.v[buoy_id] = buoy_interpolators[buoy_id].get_v(
+            t_real)
 
 
 parser = argparse.ArgumentParser(
@@ -58,7 +55,7 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
 
-real_kernel_radius = 0.015  # TODO: try changing
+real_kernel_radius = 0.020  # TODO: try changing
 unit = Unit(real_kernel_radius=real_kernel_radius,
             real_density0=read_file_float(f'{args.truth_dir}/density.txt'),
             real_gravity=-9.80665)
@@ -181,7 +178,7 @@ max_voffset = 0.04
 max_focal_dist = 0.20
 min_usher_kernel_radius = 0.02
 max_usher_kernel_radius = 0.06
-max_strength = 4000
+max_strength = 720
 
 pile.x[0] = dp.f3(0, container_width * 0.5, 0)
 
@@ -224,7 +221,8 @@ for dummy_itr in range(1):
     initial_particle_x_filename = f'{args.cache_dir}/x{num_particles}.alu'
     initial_particle_v_filename = f'{args.cache_dir}/v{num_particles}.alu'
     initial_particle_pressure_filename = f'{args.cache_dir}/pressure{num_particles}.alu'
-    if not Path(initial_particle_x_filename).is_file():
+    if True:
+    # if not Path(initial_particle_x_filename).is_file():
         dp.map_graphical_pointers()
         runner.launch_create_fluid_block(solver.particle_x,
                                          solver.num_particles,
@@ -308,6 +306,10 @@ for dummy_itr in range(1):
             f'{args.truth_dir}/rec/marker-{used_buoy_id}{filter_postfix}.npy')
         for used_buoy_id in used_buoy_ids
     ]
+    buoy_interpolators = [
+        BuoyInterpolator(dp, im_real_interval, trajectory)
+        for trajectory in buoy_trajectories
+    ]
 
     error_sum = 0
 
@@ -331,8 +333,8 @@ for dummy_itr in range(1):
         target_t = unit.from_real_time(frame_id * piv_real_interval)
 
         im_frame_id = int(frame_id * im_real_freq / piv_real_freq)
-        set_pile_from_np(dp, im_real_interval, truth_buoy_pile_real,
-                         buoy_trajectories, num_buoys, im_frame_id)
+        set_pile_from_interpolators(truth_buoy_pile_real, buoy_interpolators,
+                                    unit.to_real_time(solver.t))
         # set positions for sampling around buoys in simulation
         coil_x_real = dp.coat(truth_buoy_pile_real.x).get()
         coil_x_np = unit.from_real_length(coil_x_real)
