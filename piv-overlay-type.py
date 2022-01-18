@@ -53,17 +53,19 @@ if is_stirrer:
         print('offset =', piv_offset)
 
 
-def render_field(containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap):
+def render_field(containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap,
+                 visualize):
     my_dpi = 128
     robot_tid = int((frame_id + piv_offset) / piv_freq * robot_freq)
     if robot_tid >= 4000:
         robot_tid = 3999
     source_img_filename = f"{containing_dir}/{frame_prefix}{frame_id+1:06d}.tif"
-    fig = plt.figure(figsize=[image_dim // my_dpi, image_dim // my_dpi],
-                     dpi=my_dpi,
-                     frameon=False)
-    img_ax = plt.Axes(fig, [0., 0., 1., 1.])
-    fig.add_axes(img_ax)
+    if visualize:
+        fig = plt.figure(figsize=[image_dim // my_dpi, image_dim // my_dpi],
+                         dpi=my_dpi,
+                         frameon=False)
+        img_ax = plt.Axes(fig, [0., 0., 1., 1.])
+        fig.add_axes(img_ax)
     source_img = plt.imread(source_img_filename)
 
     window_size = 44
@@ -81,8 +83,9 @@ def render_field(containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap):
     #     img_ax.imshow(analyze_img, cmap='gray')
     #     img_ax.set_axis_off()
 
-    img_ax.imshow(source_img, cmap='gray')
-    img_ax.set_axis_off()
+    if visualize:
+        img_ax.imshow(source_img, cmap='gray')
+        img_ax.set_axis_off()
     u = np.copy(vel[frame_id, ..., 0])
     v = np.copy(vel[frame_id, ..., 1])
     acceleration_mask = np.ones(u.shape, dtype=bool)
@@ -91,7 +94,9 @@ def render_field(containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap):
         acceleration_mask = LA.norm(vel_diff, axis=2) < 0.08
 
     velocity_mask = LA.norm(vel[frame_id], axis=2) < 0.18
-    agitator_mask = np.abs(pos_x - agitator_x[robot_tid]) > 0.012
+    agitator_mask = np.abs(
+        pos_x - agitator_x[robot_tid]
+    ) > 0.06  # match with agitator_exclusion_dist in cut-silhouette.py
 
     brightness_mask = np.ones(u.shape, dtype=bool)
     for window_x in range(num_windows_x):
@@ -104,25 +109,27 @@ def render_field(containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap):
 
     mask = agitator_mask & brightness_mask & velocity_mask & acceleration_mask
     mag = np.hypot(u, v)
-    q = img_ax.quiver(pix_x[mask],
-                      pix_y[mask],
-                      u[mask],
-                      v[mask],
-                      mag[mask],
-                      cmap=cmap,
-                      scale=5)
+    if visualize:
+        q = img_ax.quiver(pix_x[mask],
+                          pix_y[mask],
+                          u[mask],
+                          v[mask],
+                          mag[mask],
+                          cmap=cmap,
+                          scale=5)
     agitator_x_pix = (agitator_x[robot_tid] + offset_x) / calxy
-    if 0 <= agitator_x_pix and agitator_x_pix < image_dim:
-        img_ax.vlines(agitator_x_pix, 0, image_dim - 1)
-    fig.savefig(f'{containing_dir}/gridfield/{frame_id}.png', dpi=my_dpi)
-    plt.close('all')
+    if visualize:
+        if 0 <= agitator_x_pix and agitator_x_pix < image_dim:
+            img_ax.vlines(agitator_x_pix, 0, image_dim - 1)
+        fig.savefig(f'{containing_dir}/gridfield/{frame_id}.png', dpi=my_dpi)
+        plt.close('all')
     return mask
 
 
 os.makedirs(f'{containing_dir}/gridfield', exist_ok=True)
 num_frames = len(vel)
-masks = Parallel(n_jobs=8)(delayed(render_field)(containing_dir, frame_prefix,
-                                                 frame_id, pix_x, pix_y, cmap)
+masks = Parallel(n_jobs=8)(delayed(render_field)(
+    containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap, False)
                            for frame_id in range(num_frames))
 np.save(f'{containing_dir}/mat_results/mask.npy',
         np.array(masks).astype(np.uint32))

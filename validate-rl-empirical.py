@@ -222,7 +222,7 @@ for dummy_itr in range(1):
     initial_particle_v_filename = f'{args.cache_dir}/v{num_particles}.alu'
     initial_particle_pressure_filename = f'{args.cache_dir}/pressure{num_particles}.alu'
     if True:
-    # if not Path(initial_particle_x_filename).is_file():
+        # if not Path(initial_particle_x_filename).is_file():
         dp.map_graphical_pointers()
         runner.launch_create_fluid_block(solver.particle_x,
                                          solver.num_particles,
@@ -294,11 +294,7 @@ for dummy_itr in range(1):
 
     mask_np = np.load(f'{args.truth_dir}/mat_results/mask.npy').reshape(
         -1, len(sample_x_piv))
-    # # TODO: sum_v2: sum of the considered piv snapshots in hindsight
-    # sum_v2 = unit.from_real_velocity_mse(
-    #     np.load(f'{args.truth_dir}/sum_v2.npy').item())
-    # max_v2 = unit.from_real_velocity_mse(
-    #     np.load(f'{args.truth_dir}/max_v2.npy').item())
+    sum_v2 = 0
 
     filter_postfix = '-f20'
     buoy_trajectories = [
@@ -329,6 +325,8 @@ for dummy_itr in range(1):
     save_dir_piv.mkdir(parents=True)
     sim_v_np = np.zeros_like(truth_v_np)
     sim_errors = np.zeros(num_frames)
+    zero3 = dp.create_coated_like(sampling.sample_data3)
+    zero3.set_zero()
     for frame_id in range(num_frames - 1):
         target_t = unit.from_real_time(frame_id * piv_real_interval)
 
@@ -379,6 +377,10 @@ for dummy_itr in range(1):
         mse_yz = runner.calculate_mse_yz_masked(simulation_v_real,
                                                 ground_truth, mask,
                                                 sampling.num_samples)
+        truth_yz_mean_norm_sqr = runner.calculate_mse_yz_masked(
+            zero3, ground_truth, mask, sampling.num_samples)
+        error_sum += mse_yz
+        sum_v2 += truth_yz_mean_norm_sqr
         print(unit.to_real_time(target_t), unit.to_real_velocity_mse(mse_yz),
               pile.v[0])
         sim_errors[frame_id] = mse_yz
@@ -390,12 +392,15 @@ for dummy_itr in range(1):
         if dp.has_display():
             display_proxy.draw()
 
+    score = -error_sum / sum_v2
+    np.save(f'{str(save_dir_piv)}/score.npy', score)
     np.save(f'{str(save_dir_piv)}/sim_v_real.npy', sim_v_np)
     np.save(f'{str(save_dir_piv)}/truth_v_real.npy', truth_v_np)
     np.save(f'{str(save_dir_piv)}/sim_errors.npy', sim_errors)
 
     dp.remove(ground_truth)
     dp.remove(visual_x_scaled)
+    dp.remove(zero3)
     if args.display:
         dp.remove(particle_normalized_attr)
     sampling.destroy_variables()
