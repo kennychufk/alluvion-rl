@@ -41,7 +41,7 @@ class FluidSample:
                                          solver.pid_length,
                                          self.sample_neighbors,
                                          self.sample_num_neighbors,
-                                         self.num_samples)
+                                         solver.grid_anomaly, self.num_samples)
         solver.sample_all_boundaries(self.sample_x, self.sample_boundary,
                                      self.sample_boundary_kernel,
                                      self.num_samples)
@@ -52,6 +52,7 @@ class FluidSample:
                                                solver.pid_length,
                                                self.sample_neighbors,
                                                self.sample_num_neighbors,
+                                               solver.grid_anomaly,
                                                self.num_samples)
         solver.sample_all_boundaries(self.sample_x, self.sample_boundary,
                                      self.sample_boundary_kernel,
