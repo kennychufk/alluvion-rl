@@ -120,15 +120,19 @@ class MLPCritic(nn.Module):
 class MLPTwinCritic(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
         super(MLPTwinCritic, self).__init__()
-        elements = []
+        net0_elements = []
+        net1_elements = []
         layer_sizes = [obs_dim + act_dim] + list(hidden_sizes) + [1]
         for i in range(len(layer_sizes) - 1):
-            elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            net0_elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            net1_elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 2:
-                elements.append(nn.LayerNorm(layer_sizes[i + 1]))
-                elements.append(nn.ReLU())
-        self.net0 = nn.Sequential(*elements)
-        self.net1 = nn.Sequential(*elements)
+                net0_elements.append(nn.LayerNorm(layer_sizes[i + 1]))
+                net0_elements.append(nn.ReLU())
+                net1_elements.append(nn.LayerNorm(layer_sizes[i + 1]))
+                net1_elements.append(nn.ReLU())
+        self.net0 = nn.Sequential(*net0_elements)
+        self.net1 = nn.Sequential(*net1_elements)
 
         final_layer0 = [
             m for m in self.net0.modules() if not isinstance(m, nn.Sequential)
