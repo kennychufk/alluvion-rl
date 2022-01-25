@@ -622,6 +622,9 @@ while True:
     wandb.log(log_object)
     if validation_mode:
         np.save('val/score.npy', score)
+    dp.remove(mask)
+    dp.remove(ground_truth)
+    dp.remove(visual_x_scaled)
     dp.remove(ground_truth)
     sampling.destroy_variables()
     episode_id += 1
