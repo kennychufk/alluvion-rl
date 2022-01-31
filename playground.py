@@ -46,7 +46,7 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
 
-real_kernel_radius = 0.020
+real_kernel_radius = 0.010
 unit = Unit(real_kernel_radius=real_kernel_radius,
             real_density0=1000,
             real_gravity=-9.80665)
@@ -622,6 +622,7 @@ while True:
     wandb.log(log_object)
     if validation_mode:
         np.save('val/score.npy', score)
+        print('score', score)
     dp.remove(mask)
     dp.remove(ground_truth)
     dp.remove(visual_x_scaled)

@@ -23,12 +23,20 @@ class RigidInterpolator:
         print('shape', x.shape)
         self.cubic_spline = CubicSpline(np.arange(4000) / 200, x)
 
+    def get_x_real_from_real_t(self, t):
+        x_real = self.cubic_spline(t)
+        return self.dp.f3(x_real[0], x_real[1], x_real[2])
+
     def get_x_real(self, t):
         x_real = self.cubic_spline(self.unit.to_real_time(t))
         return self.dp.f3(x_real[0], x_real[1], x_real[2])
 
     def get_x(self, t):
         return self.unit.from_real_length(self.get_x_real(t))
+
+    def get_v_real_from_real_t(self, t):
+        v_real = self.cubic_spline(t, 1)
+        return self.dp.f3(v_real[0], v_real[1], v_real[2])
 
     def get_v_real(self, t):
         v_real = self.cubic_spline(self.unit.to_real_time(t), 1)

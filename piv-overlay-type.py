@@ -1,5 +1,6 @@
 import os
 import sys
+import argparse
 import shutil
 import glob
 import numpy as np
@@ -18,8 +19,15 @@ import pandas as pd
 from joblib import Parallel, delayed
 matplotlib.use('Agg')
 
-piv_dir_name = sys.argv[1]
-remove_robot_agitator = True
+parser = argparse.ArgumentParser(description='PIV masking')
+parser.add_argument('--piv-dir-name', type=str, required=True)
+parser.add_argument('--agitator-thickness', type=float, default=0.0)
+parser.add_argument('--output-image', type=bool, default=False)
+args = parser.parse_args()
+
+piv_dir_name = args.piv_dir_name
+agitator_thickness = args.agitator_thickness
+
 containing_dir = f'/media/kennychufk/vol1bk0/{piv_dir_name}/'
 pos = np.load(f'{containing_dir}/mat_results/pos.npy')
 vel = np.load(f'{containing_dir}/mat_results/vel_filtered.npy')
@@ -33,13 +41,14 @@ pix_point_interval = image_dim / (num_points_per_row + 1)
 pos_x = pos[..., 0]
 pix_x = np.rint((pos[..., 0] + offset_x) / calxy).astype(int)
 pix_y = image_dim + np.rint((-pos[..., 1] - offset_y) / calxy).astype(int)
-if remove_robot_agitator:
+if agitator_thickness > 0:
     robot_filename = glob.glob(f'{containing_dir}/Trace*.csv')[0]
     robot_frames = pd.read_csv(
         robot_filename,
         comment='"',
         names=['tid', 'j0', 'j1', 'j2', 'j3', 'j4', 'j5', 'x', 'y', 'z', 'v'])
     agitator_x = robot_frames['y'].to_numpy() / 1000.0
+output_postfix = f'-at{agitator_thickness}' if agitator_thickness > 0 else ''
 
 hyphen_position = piv_dir_name.find('-')
 frame_prefix = piv_dir_name if hyphen_position < 0 else piv_dir_name[:
@@ -50,8 +59,7 @@ cmap = sns.color_palette("vlag", as_cmap=True)
 piv_freq = 500.0
 robot_freq = 200.0
 
-is_stirrer = True
-if is_stirrer and remove_robot_agitator:
+if agitator_thickness > 0:
     with open(f"{containing_dir}/robot-time-offset") as f:
         piv_offset = int(f.read())
         print('offset =', piv_offset)
@@ -108,19 +116,22 @@ def render_field(containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap,
 
     velocity_mask = LA.norm(vel[frame_id], axis=2) < 0.18
     agitator_mask = np.ones(u.shape, dtype=bool)
-    if remove_robot_agitator:
+    if agitator_thickness > 0:
         robot_tid = int((frame_id + piv_offset) / piv_freq * robot_freq)
         if robot_tid >= 4000:
             robot_tid = 3999
-        agitator_mask = np.abs(
-            pos_x - agitator_x[robot_tid]
-        ) > 0.02  # match with agitator_exclusion_dist in cut-silhouette.py
+        agitator_mask = np.abs(pos_x -
+                               agitator_x[robot_tid]) > agitator_thickness
 
     uv_norm = LA.norm(uv, axis=2)
-    uv_norm_std = np.nanstd(uv_norm)
-    uv_norm_mean = np.nanmean(uv_norm)
-    std_threshold = 1
-    velocity_std_mask = uv_norm > (uv_norm_mean - std_threshold * uv_norm_std)
+    has_valid_uv = np.sum(np.logical_not(np.isnan(uv_norm))) > 0
+    velocity_std_mask = np.ones(u.shape, dtype=bool)
+    if has_valid_uv:
+        uv_norm_std = np.nanstd(uv_norm)
+        uv_norm_mean = np.nanmean(uv_norm)
+        std_threshold = 1
+        velocity_std_mask = uv_norm > (uv_norm_mean -
+                                       std_threshold * uv_norm_std)
 
     brightness_mask = np.ones(u.shape, dtype=bool)
     for window_x in range(num_windows_x):
@@ -175,19 +186,22 @@ def render_field(containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap,
                           mag[mask],
                           cmap=cmap,
                           scale=5)
-    if visualize and remove_robot_agitator:
-        agitator_x_pix = (agitator_x[robot_tid] + offset_x) / calxy
-        if 0 <= agitator_x_pix and agitator_x_pix < image_dim:
-            img_ax.vlines(agitator_x_pix, 0, image_dim - 1)
-        fig.savefig(f'{containing_dir}/gridfield/{frame_id}.png', dpi=my_dpi)
+        if agitator_thickness > 0:
+            agitator_x_pix = (agitator_x[robot_tid] + offset_x) / calxy
+            if 0 <= agitator_x_pix and agitator_x_pix < image_dim:
+                img_ax.vlines(agitator_x_pix, 0, image_dim - 1)
+        fig.savefig(
+            f'{containing_dir}/gridfield/frame{output_postfix}-{frame_id}.png',
+            dpi=my_dpi)
         plt.close('all')
     return mask
 
 
 os.makedirs(f'{containing_dir}/gridfield', exist_ok=True)
 num_frames = len(vel)
-masks = Parallel(n_jobs=8)(delayed(render_field)(
-    containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap, True)
-                           for frame_id in range(num_frames))
-np.save(f'{containing_dir}/mat_results/mask.npy',
+masks = Parallel(n_jobs=8)(
+    delayed(render_field)(containing_dir, frame_prefix, frame_id, pix_x, pix_y,
+                          cmap, args.output_image)
+    for frame_id in range(num_frames))
+np.save(f'{containing_dir}/mat_results/mask{output_postfix}.npy',
         np.array(masks).astype(np.uint32))

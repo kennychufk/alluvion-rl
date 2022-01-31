@@ -3,7 +3,9 @@ import argparse
 import math
 import random
 import os
+import time
 from collections import deque
+import pickle
 
 import alluvion as al
 import numpy as np
@@ -12,36 +14,20 @@ from sklearn.metrics import mean_squared_error
 import torch
 
 from ddpg_torch import TD3, GaussianNoise
-from util import Unit, FluidSample, parameterize_kinematic_viscosity, BuoyInterpolator, get_obs_dim, get_act_dim, make_obs, set_usher_param, RigidInterpolator
+from util import Unit, FluidSample, parameterize_kinematic_viscosity, BuoyInterpolator, get_obs_dim, get_act_dim, make_obs, set_usher_param
 from util import get_timestamp_and_hash
 from util import read_file_int, read_file_float
 
 
 def set_pile_from_interpolators(truth_buoy_pile_real, buoy_interpolators,
-                                t_real, robot_interpolator, robot_time_offset):
-    buoy_x_shift = dp.f3(
-        0, -0.026,
-        0)  # coil center to board surface: 21mm, tank thickness: 5mm
-    buoy_v_shift = dp.f3(0, 0, 0)
-    if robot_interpolator is not None:
-        robot_x = robot_interpolator.get_x_real_from_real_t(t_real +
-                                                            robot_time_offset)
-        robot_v = robot_interpolator.get_v_real_from_real_t(t_real +
-                                                            robot_time_offset)
-        # print(t_real, t_real + robot_time_offset)
-        print(t_real + robot_time_offset, 'robot x v [z]', robot_x, robot_v)
-        buoy_x_shift.z = -robot_x.z
-        buoy_v_shift.z = -robot_v.z
-        buoy_x_shift.y = -0.0538  # coil center to board surface: 21mm, board surface to tank bottom: 27.8mm
+                                t_real):
     for buoy_id in range(truth_buoy_pile_real.get_size()):
         truth_buoy_pile_real.x[buoy_id] = buoy_interpolators[buoy_id].get_x(
-            t_real) + buoy_x_shift
-        print(buoy_id, truth_buoy_pile_real.x[buoy_id])
+            t_real)
         truth_buoy_pile_real.q[buoy_id] = buoy_interpolators[buoy_id].get_q(
             t_real)
         truth_buoy_pile_real.v[buoy_id] = buoy_interpolators[buoy_id].get_v(
-            t_real) + buoy_v_shift
-        # print(buoy_id, truth_buoy_pile_real.v[buoy_id])
+            t_real)
 
 
 parser = argparse.ArgumentParser(
@@ -49,25 +35,12 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--truth-dir', type=str, required=True)
 parser.add_argument('--cache-dir', type=str, default='.')
 parser.add_argument('--display', metavar='d', type=bool, default=False)
-parser.add_argument('--moving-container',
-                    metavar='c',
-                    type=bool,
-                    default=False)
 parser.add_argument('--validate-model', type=str, required=True)
-parser.add_argument('--mask-postfix', type=str, default='')
-parser.add_argument('--filter-postfix', type=str, default='f20')
-parser.add_argument('--real-h', type=str, required=True)
 args = parser.parse_args()
 
 dp = al.Depot(np.float32)
 cn = dp.cn
 cni = dp.cni
-
-model_name = args.validate_model[args.validate_model.find('/') + 1:].replace(
-    '/models/', '-')
-mask_postfix = '' if len(args.mask_postfix) == 0 else f'-{args.mask_postfix}'
-filter_postfix = '' if len(
-    args.filter_postfix) == 0 else f'-{args.filter_postfix}'
 
 if args.display:
     dp.create_display(800, 600, "", False)
@@ -84,7 +57,7 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
 
-real_kernel_radius = float(args.real_h)  # TODO: try changing
+real_kernel_radius = 0.011  # TODO: try changing
 unit = Unit(real_kernel_radius=real_kernel_radius,
             real_density0=read_file_float(f'{args.truth_dir}/density.txt'),
             real_gravity=-9.80665)
@@ -167,10 +140,11 @@ solver = dp.SolverI(runner,
                     enable_surface_tension=False,
                     enable_vorticity=False,
                     graphical=args.display)
+solver.density_error_tolerance = 2e-3
 
 usher_sampling = FluidSample(dp, np.zeros((num_buoys, 3), dp.default_dtype))
 solver.num_particles = num_particles
-solver.max_dt = unit.from_real_time(0.05 * unit.rl)
+solver.max_dt = unit.from_real_time(0.1 * unit.rl)
 solver.initial_dt = solver.max_dt
 solver.min_dt = 0
 solver.cfl = 0.4
@@ -201,13 +175,6 @@ for i in range(num_buoys):
 
 piv_real_freq = 500.0
 piv_real_interval = 1.0 / piv_real_freq
-
-robot_real_freq = 200.0
-robot_interpolator = None
-if args.moving_container:
-    robot_interpolator = RigidInterpolator(dp, unit,
-                                           f'{args.truth_dir}/Trace.csv')
-robot_time_offset = 10 / piv_real_freq  # too difficult to determine, use best guess
 
 max_xoffset = 0.05
 max_voffset = 0.04
@@ -250,6 +217,11 @@ agent = TD3(actor_lr=3e-4,
 
 agent.load_models(args.validate_model)
 
+solver_step_time_list =[]
+num_density_solve_list = []
+inference_time_list = []
+sampling_time_list = []
+
 for dummy_itr in range(1):
     solver.num_particles = num_particles
     print('num_particles', num_particles)
@@ -257,8 +229,7 @@ for dummy_itr in range(1):
     initial_particle_x_filename = f'{args.cache_dir}/x{num_particles}.alu'
     initial_particle_v_filename = f'{args.cache_dir}/v{num_particles}.alu'
     initial_particle_pressure_filename = f'{args.cache_dir}/pressure{num_particles}.alu'
-    if True:
-        # if not Path(initial_particle_x_filename).is_file():
+    if not Path(initial_particle_x_filename).is_file():
         dp.map_graphical_pointers()
         runner.launch_create_fluid_block(solver.particle_x,
                                          solver.num_particles,
@@ -283,7 +254,7 @@ for dummy_itr in range(1):
                     last_tranquillized = solver.t
                 elif unit.to_real_time(solver.t - last_tranquillized
                                        ) > 0.4 and unit.to_real_velocity(
-                                           v_rms) < 0.01:
+                                           v_rms) < 0.0137:
                     print("rest state achieved at",
                           unit.to_real_time(solver.t))
                     rest_state_achieved = True
@@ -317,22 +288,7 @@ for dummy_itr in range(1):
     sample_x_np[:, 2] = sample_x_piv[:, 0]
     sample_x_np[:, 1] = sample_x_piv[:, 1]
 
-    sampling = FluidSample(dp, unit.from_real_length(sample_x_np))
-    ground_truth = dp.create_coated_like(sampling.sample_data3)
-    mask = dp.create_coated((sampling.num_samples), 1, np.uint32)
-
-    truth_v_piv = np.load(
-        f'{args.truth_dir}/mat_results/vel_filtered.npy').reshape(
-            -1, len(sample_x_piv), 2)
-    truth_v_np = np.zeros((*truth_v_piv.shape[:-1], 3))
-    truth_v_np[..., 2] = truth_v_piv[..., 0]
-    truth_v_np[..., 1] = truth_v_piv[..., 1]
-
-    mask_np = np.load(
-        f'{args.truth_dir}/mat_results/mask{mask_postfix}.npy').reshape(
-            -1, len(sample_x_piv))
-    sum_v2 = 0
-
+    filter_postfix = '-f18'
     buoy_trajectories = [
         np.load(
             f'{args.truth_dir}/rec/marker-{used_buoy_id}{filter_postfix}.npy')
@@ -343,109 +299,73 @@ for dummy_itr in range(1):
         for trajectory in buoy_trajectories
     ]
 
-    error_sum = 0
+    num_frames = 10000
 
-    num_frames = len(truth_v_piv)
-
-    visual_real_freq = 30.0
-    visual_real_interval = 1.0 / visual_real_freq
-    next_visual_frame_id = 0
-    visual_x_scaled = dp.create_coated_like(solver.particle_x)
-
-    timestamp_str, timestamp_hash = get_timestamp_and_hash()
-    save_dir = Path(
-        f'recon-{Path(args.truth_dir).name}-{model_name}-{args.real_h}{mask_postfix}{filter_postfix}-{timestamp_hash}'
-    )
-    save_dir.mkdir(parents=True)
-    save_dir_visual = Path(save_dir, 'visual')
-    save_dir_visual.mkdir(parents=True)
-    save_dir_piv = Path(save_dir, 'piv')
-    save_dir_piv.mkdir(parents=True)
-    sim_v_np = np.zeros_like(truth_v_np)
-    sim_errors = np.zeros(num_frames)
-    zero3 = dp.create_coated_like(sampling.sample_data3)
-    zero3.set_zero()
     for frame_id in range(num_frames - 1):
         target_t = unit.from_real_time(frame_id * piv_real_interval)
 
-        im_frame_id = int(frame_id * im_real_freq / piv_real_freq)
         set_pile_from_interpolators(truth_buoy_pile_real, buoy_interpolators,
-                                    unit.to_real_time(solver.t),
-                                    robot_interpolator, robot_time_offset)
+                                    unit.to_real_time(solver.t))
         # set positions for sampling around buoys in simulation
         coil_x_real = dp.coat(truth_buoy_pile_real.x).get()
         coil_x_np = unit.from_real_length(coil_x_real)
         usher_sampling.sample_x.set(coil_x_np)
 
         dp.map_graphical_pointers()
+        usher_sampling_start = time.perf_counter()
         usher_sampling.prepare_neighbor_and_boundary(runner, solver)
         usher_sampling.sample_density(runner)
         usher_sampling.sample_velocity(runner, solver)
         usher_sampling.sample_vorticity(runner, solver)
+        usher_sampling_end = time.perf_counter()
 
         obs_aggregated = make_obs(dp, unit, kinematic_viscosity_real,
                                   truth_buoy_pile_real, coil_x_real,
                                   usher_sampling, num_buoys)
 
+        inference_start = time.perf_counter()
         act_aggregated = agent.get_action(obs_aggregated, enable_noise=False)
+        inference_end = time.perf_counter()
         act_aggregated_converted = agent.actor.from_normalized_action(
             act_aggregated)
         set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
                         coil_x_real, act_aggregated_converted, num_buoys)
+        num_steps_per_frame = 0
+        num_density_solves_in_frame =[]
+        step_times_in_frame = []
         while (solver.t < target_t):
+            num_steps_per_frame+=1
             solver.step()
-            if solver.t >= unit.from_real_time(
-                    next_visual_frame_id * visual_real_interval):
-                visual_x_scaled.set_from(solver.particle_x)
-                visual_x_scaled.scale(unit.to_real_length(1))
-                visual_x_scaled.write_file(
-                    f'{str(save_dir_visual)}/visual-x-{next_visual_frame_id}.alu',
-                    solver.num_particles)
-                pile.write_file(
-                    f'{str(save_dir_visual)}/visual-{next_visual_frame_id}.pile',
-                    unit.to_real_length(1), unit.to_real_velocity(1),
-                    unit.to_real_angular_velocity(1))
-                next_visual_frame_id += 1
+            num_density_solves_in_frame.append(solver.num_density_solve)
+            step_times_in_frame.append(runner.custom_elapsed_dict['step(total)'])
+            # print('step', solver.num_density_solve, runner.custom_elapsed_dict['step(total)'])
+            # for key in runner.launch_stat_dict:
+            #     stats = runner.launch_stat_dict[key]
+            #     for record in stats:
+            #         if record[0]>0:
+            #             print(key, record[0])
+        inference_time_ms = (inference_end - inference_start) * 1000
+        usher_sampling_time_ms = (usher_sampling_end - usher_sampling_start) * 1000
 
-        sampling.prepare_neighbor_and_boundary(runner, solver)
-        simulation_v_real = sampling.sample_velocity(runner, solver)
-        simulation_v_real.scale(unit.to_real_velocity(1))
-        sim_v_np[frame_id] = simulation_v_real.get()
-        if robot_interpolator is not None:
-            robot_v = robot_interpolator.get_v_real_from_real_t(
-                unit.to_real_time(solver.t) + robot_time_offset)
-            truth_v_shift = np.tile([0, 0, -robot_v.z],
-                                    sampling.num_samples).reshape(-1, 3)
-            truth_v_np[frame_id] += truth_v_shift
-        ground_truth.set(truth_v_np[frame_id])
-        mask.set(mask_np[frame_id])
-        mse_yz = runner.calculate_mse_yz_masked(simulation_v_real,
-                                                ground_truth, mask,
-                                                sampling.num_samples)
-        truth_yz_mean_norm_sqr = runner.calculate_mse_yz_masked(
-            zero3, ground_truth, mask, sampling.num_samples)
-        error_sum += mse_yz
-        sum_v2 += truth_yz_mean_norm_sqr
-        print(unit.to_real_time(target_t), pile.v[0])
-        sim_errors[frame_id] = mse_yz
+        inference_time_list.append(inference_time_ms)
+        sampling_time_list.append(usher_sampling_time_ms)
+        solver_step_time_list.append(step_times_in_frame)
+        num_density_solve_list.append(num_density_solves_in_frame)
 
-        if dp.has_display():
-            solver.normalize(solver.particle_v, particle_normalized_attr, 0,
-                             unit.from_real_velocity(0.02))
         dp.unmap_graphical_pointers()
+
+        # print(num_steps_per_frame, usher_sampling_time_ms, inference_time_ms)
         if dp.has_display():
             display_proxy.draw()
 
-    score = -error_sum / sum_v2
-    print('score', score)
-    np.save(f'{str(save_dir_piv)}/score.npy', score)
-    np.save(f'{str(save_dir_piv)}/sim_v_real.npy', sim_v_np)
-    np.save(f'{str(save_dir_piv)}/truth_v_real.npy', truth_v_np)
-    np.save(f'{str(save_dir_piv)}/sim_errors.npy', sim_errors)
-
-    dp.remove(ground_truth)
-    dp.remove(visual_x_scaled)
-    dp.remove(zero3)
     if args.display:
         dp.remove(particle_normalized_attr)
-    sampling.destroy_variables()
+
+with open("inference_time_list.pkl", 'wb') as f:
+    pickle.dump(inference_time_list, f)
+with open("sampling_time_list.pkl", 'wb') as f:
+    pickle.dump(sampling_time_list, f)
+with open("solver_step_time_list.pkl", 'wb') as f:
+    pickle.dump(solver_step_time_list, f)
+with open("num_density_solve_list.pkl", 'wb') as f:
+    pickle.dump(num_density_solve_list, f)
