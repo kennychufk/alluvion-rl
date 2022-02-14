@@ -401,6 +401,10 @@ while True:
     solver.num_particles = num_particles
     print('num_particles', num_particles)
 
+    num_buoys = dp.Pile.get_size_from_file(f'{ground_truth_dir}/0.pile') - 2
+    solver.usher.reset()
+    solver.usher.num_ushers = num_buoys
+
     initial_particle_x_filename = f'{args.cache_dir}/x{num_particles}.alu'
     initial_particle_v_filename = f'{args.cache_dir}/v{num_particles}.alu'
     initial_particle_pressure_filename = f'{args.cache_dir}/pressure{num_particles}.alu'
@@ -468,7 +472,6 @@ while True:
         np.load(f'{ground_truth_dir}/max_v2.npy').item())
     dp.map_graphical_pointers()
     solver.update_particle_neighbors()
-    num_buoys = dp.Pile.get_size_from_file(f'{ground_truth_dir}/0.pile') - 2
     truth_buoy_pile_real.read_file(f'{ground_truth_dir}/0.pile', num_buoys, 0,
                                    1)
     coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
