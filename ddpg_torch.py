@@ -103,7 +103,6 @@ class MLPCritic(nn.Module):
         for i in range(len(layer_sizes) - 1):
             elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 2:
-                elements.append(nn.LayerNorm(layer_sizes[i + 1]))
                 elements.append(nn.ReLU())
         self.net = nn.Sequential(*elements)
 
@@ -127,9 +126,7 @@ class MLPTwinCritic(nn.Module):
             net0_elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             net1_elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 2:
-                net0_elements.append(nn.LayerNorm(layer_sizes[i + 1]))
                 net0_elements.append(nn.ReLU())
-                net1_elements.append(nn.LayerNorm(layer_sizes[i + 1]))
                 net1_elements.append(nn.ReLU())
         self.net0 = nn.Sequential(*net0_elements)
         self.net1 = nn.Sequential(*net1_elements)
@@ -164,7 +161,6 @@ class MLPCriticMixAction(nn.Module):
         for i in range(len(obs_net_sizes) - 1):
             obs_net_elements.append(
                 nn.Linear(obs_net_sizes[i], obs_net_sizes[i + 1]))
-            obs_net_elements.append(nn.LayerNorm(obs_net_sizes[i + 1]))
             obs_net_elements.append(nn.ReLU())
         self.obs_net = nn.Sequential(*obs_net_elements)
 
@@ -205,7 +201,6 @@ class MLPActor(nn.Module):
         for i in range(len(layer_sizes) - 1):
             elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 2:
-                elements.append(nn.LayerNorm(layer_sizes[i + 1]))
                 elements.append(nn.ReLU())
             else:
                 elements.append(nn.Tanh())
@@ -241,8 +236,8 @@ class TD3:
                  policy_noise=0.2,
                  noise_clip=0.5,
                  policy_update_freq=2,
-                 actor_final_scale=0.051961524,
-                 critic_final_scale=0.005196152,
+                 actor_final_scale=1,
+                 critic_final_scale=1,
                  learn_after=0,
                  batch_size=64):
         self.gamma = gamma
@@ -285,8 +280,8 @@ class TD3:
         self.expl_noise_func = expl_noise_func
         self.expl_noise_func.reset(act_dim)
 
-        DDPGAgent.hard_update(self.target_actor, self.actor)
-        DDPGAgent.hard_update(self.target_critic, self.critic)
+        TD3.hard_update(self.target_actor, self.actor)
+        TD3.hard_update(self.target_critic, self.critic)
 
     def uniform_random_action(self):
         return np.random.uniform(-1, 1, self.act_dim)
@@ -327,7 +322,6 @@ class TD3:
 
             target_q0, target_q1 = self.target_critic(new_state, new_action)
             target_q = torch.min(target_q0, target_q1)
-            # TODO: is view() redundant?
             target_q = reward.view(
                 self.batch_size,
                 1) + self.gamma * term.view(self.batch_size, 1) * target_q
@@ -347,7 +341,6 @@ class TD3:
 
             self.actor_optimizer.zero_grad()
             mu = self.actor.forward(state)
-            # actor_loss = -self.critic.forward(state, mu)
             actor_loss = -self.critic.q0(state, mu)
             actor_loss = actor_loss.mean()
             actor_loss.backward()
@@ -357,10 +350,10 @@ class TD3:
             for p in self.critic.parameters():
                 p.requires_grad = True
 
-            DDPGAgent.soft_update(self.target_actor, self.actor,
-                                  self.soft_update_rate)
-            DDPGAgent.soft_update(self.target_critic, self.critic,
-                                  self.soft_update_rate)
+            TD3.soft_update(self.target_actor, self.actor,
+                            self.soft_update_rate)
+            TD3.soft_update(self.target_critic, self.critic,
+                            self.soft_update_rate)
 
     @staticmethod
     def hard_update(dst_net, src_net):

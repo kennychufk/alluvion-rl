@@ -7,7 +7,7 @@ import torch
 import gym
 import wandb
 
-from ddpg_torch import DDPGAgent, TD3, OrnsteinUhlenbeckProcess, GaussianNoise
+from ddpg_torch import TD3, OrnsteinUhlenbeckProcess, GaussianNoise
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=2021)
@@ -20,17 +20,18 @@ torch.manual_seed(args.seed)
 env = gym.make('LunarLanderContinuous-v2')
 env.seed(args.seed)
 
-agent = DDPGAgent(actor_lr=1e-4,
-                  critic_lr=1e-3,
-                  critic_weight_decay=1e-2,
-                  obs_dim=8,
-                  act_dim=2,
-                  min_action=env.action_space.low,
-                  max_action=env.action_space.high,
-                  expl_noise_func=OrnsteinUhlenbeckProcess(),
-                  hidden_sizes=[400, 300],
-                  soft_update_rate=0.001,
-                  batch_size=64)
+agent = TD3(actor_lr=1e-4,
+            critic_lr=1e-3,
+            critic_weight_decay=1e-2,
+            obs_dim=8,
+            act_dim=2,
+            min_action=env.action_space.low,
+            max_action=env.action_space.high,
+            replay_size=1000000,
+            expl_noise_func=OrnsteinUhlenbeckProcess(),
+            hidden_sizes=[400, 300],
+            soft_update_rate=0.001,
+            batch_size=64)
 
 wandb.init(project='rl-continuous')
 config = wandb.config
@@ -59,7 +60,7 @@ with open('switch', 'w') as f:
     f.write('1')
 i = 0
 sample_step = 0
-while True:
+for iteration_count in range(2000):
     with open('switch', 'r') as f:
         if f.read(1) == '0':
             break
