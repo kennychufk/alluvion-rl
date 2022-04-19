@@ -33,7 +33,7 @@ for i in range(num_buoys):
     buoy_id = pile.add(
         buoy.create_distance(
             inset=-buoy_exclusion_dist),  # NOTE: remove distance offset
-        al.uint3(64, 64, 64),
+        al.uint3(24, 153, 24),
         sign=1,
         collision_mesh=buoy.mesh,
         mass=buoy.mass,
@@ -53,7 +53,7 @@ agitator_distance = dp.MeshDistance.create(
     agitator_triangle_mesh,
     offset=agitator_exclusion_dist)  # NOTE: remove distance offset
 agitator_extent = agitator_distance.aabb_max - agitator_distance.aabb_min
-agitator_res_float = agitator_extent / 0.0012  # NOTE: does not need to be the same resolution with the original
+agitator_res_float = agitator_extent / 0.0048  # NOTE: does not need to be the same resolution with the original
 agitator_res = al.uint3(int(agitator_res_float.x), int(agitator_res_float.y),
                         int(agitator_res_float.z))
 print('agitator_res', agitator_res)

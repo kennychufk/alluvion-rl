@@ -14,7 +14,10 @@ parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--output-dir', type=str, default='.')
 parser.add_argument('--write-visual', type=bool, default=False)
 parser.add_argument('--shape-dir', type=str, required=True)
+parser.add_argument('--seed', type=int, required=True)
+parser.add_argument('--num-buoys', type=int, required=True)
 args = parser.parse_args()
+np.random.seed(args.seed)
 dp = al.Depot(np.float32)
 cn = dp.cn
 cni = dp.cni
@@ -56,70 +59,6 @@ pile = dp.Pile(dp, runner, max_num_contacts)
 target_container_volume = unit.from_real_volume(0.008)
 container_mesh = al.Mesh()
 
-# ## =============== using ShapeNet container
-# container_options = [
-#     '02880940/a593e8863200fdb0664b3b9b23ddfcbc',
-#     '03991062/be0b5e9deced304a2c59a4d90e63212',
-#     '02808440/e78f7e89878402513af30a3946d92feb',
-#     '02808440/22eb6e2af43e6e78ba47eca8aa80094',
-#     '02808440/549663876b12914accd0340812259a39'
-# ]
-# container_selected_id = np.random.randint(low=0, high=len(container_options))
-# container_option = container_options[container_selected_id]
-#
-# container_model_dir = f'{args.shape_dir}/{container_option}/models'
-# container_mesh_filename = f'{container_model_dir}/inv-meshfix.obj'
-# container_mesh.set_obj(container_mesh_filename)
-# original_volume, _, _, _ = container_mesh.calculate_mass_properties()
-# print(original_volume)
-# container_scale = np.cbrt(target_container_volume / original_volume)
-# container_mesh.scale(container_scale)
-# new_volume, _, _, _ = container_mesh.calculate_mass_properties()
-# print(new_volume)
-#
-# container_triangle_mesh = dp.TriangleMesh()
-# container_mesh.copy_to(container_triangle_mesh)
-# container_distance = dp.MeshDistance.create(container_triangle_mesh,
-#                                             0.444 * kernel_radius)
-#
-# print(container_distance.aabb_min)
-# print(container_distance.aabb_max)
-#
-# container_extent = container_distance.aabb_max - container_distance.aabb_min
-# container_res_float = container_extent / particle_radius
-# container_res = al.uint3(int(container_res_float.x),
-#                          int(container_res_float.y),
-#                          int(container_res_float.z))
-# print('container_res', container_res)
-# container_distance_grid_filename = f'{container_model_dir}/container_distance_grid.alu'
-# container_volume_grid_filename = f'{container_model_dir}/container_volume_grid.alu'
-# if Path(container_distance_grid_filename).is_file() and Path(
-#         container_volume_grid_filename).is_file():
-#     pile.add(container_distance,
-#              container_res,
-#              sign=-1,
-#              collision_mesh=container_mesh,
-#              mass=0,
-#              restitution=0.8,
-#              friction=0.3,
-#              distance_grid_filename=container_distance_grid_filename,
-#              volume_grid_filename=container_volume_grid_filename)
-# else:
-#     print("Grid files not found. Build from scratch.")
-#     pile.add(container_distance,
-#              container_res,
-#              sign=-1,
-#              collision_mesh=container_mesh,
-#              mass=0,
-#              restitution=0.8,
-#              friction=0.3)
-#     pile.distance_grids[0].write_file(
-#         container_distance_grid_filename,
-#         pile.distance_grids[0].get_linear_shape())
-#     pile.volume_grids[0].write_file(container_volume_grid_filename,
-#                                     pile.volume_grids[0].get_linear_shape())
-# ## =============== using ShapeNet container
-
 ## ================== using cube
 container_scale = 1.0
 container_option = ''
@@ -146,7 +85,7 @@ pile.add(
 ## ================== using cube
 
 buoy = BuoySpec(dp, unit)
-num_buoys = np.random.randint(low=4, high=9)
+num_buoys = args.num_buoys
 
 
 def get_random_position(aabb_min, aabb_max):
@@ -357,6 +296,8 @@ timestamp_str, timestamp_hash = get_timestamp_and_hash()
 frame_directory = f'{args.output_dir}/rltruth-{timestamp_hash}-{timestamp_str}'
 Path(frame_directory).mkdir(parents=True, exist_ok=True)
 # =========== save config
+np.save(f'{frame_directory}/seed.npy', args.seed)
+np.save(f'{frame_directory}/num_buoys.npy', args.num_buoys)
 np.save(f'{frame_directory}/fluid_mass.npy',
         unit.to_real_mass(num_particles * particle_mass))
 np.save(f'{frame_directory}/density0_real.npy', density0_real)
@@ -478,33 +419,6 @@ while not rest_state_achieved or solver.t < target_t:
             pile.omega[agitator_id] = dp.f3(agitator_omega[0],
                                             agitator_omega[1],
                                             agitator_omega[2])
-            # if remaining_force_time <= 0 and next_force_time < 0:
-            #     next_force_time = solver.t + unit.from_real_time(
-            #         np.random.rand(1) * 0.12)
-            #     print('next_force_time', next_force_time)
-            # if next_force_time <= solver.t and remaining_force_time <= 0:
-            #     next_force_time = -1
-            #     remaining_force_time = unit.from_real_time(
-            #         np.random.rand(1) * 0.8)
-            #     agitator_x = pile.x[agitator_id]
-            #     agitator_angular_acc = unit.from_real_angular_acceleration(
-            #         (np.random.rand(3) - 0.5) * 20.1 * np.pi)
-            #     agitator_a = unit.from_real_acceleration(
-            #         np.random.uniform(low=1.0, high=5.0, size=3))
-            #     agitator_a[0] *= -(np.sign(agitator_x.x))
-            #     agitator_a[1] = unit.from_real_acceleration(
-            #         (np.random.rand(1) - 0.7) * 2.0)
-            #     agitator_a[2] *= -(np.sign(agitator_x.z))
-            #     print('start force', agitator_a, agitator_angular_acc)
-
-            # if remaining_force_time > 0:
-            #     agitator_v += agitator_a * solver.dt
-            #     agitator_omega += agitator_angular_acc * solver.dt
-
-            #     pile.v[agitator_id] = dp.f3(agitator_v[0], agitator_v[1], agitator_v[2])
-            #     pile.omega[agitator_id] = dp.f3(agitator_omega[0], agitator_omega[1],
-            #                                  agitator_omega[2])
-            #     remaining_force_time -= solver.dt
         else:  # if not rest_state_achieved
             v_rms = np.sqrt(
                 runner.sum(solver.particle_cfl_v2, solver.num_particles) /
