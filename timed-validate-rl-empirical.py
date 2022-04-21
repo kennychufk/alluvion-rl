@@ -13,8 +13,8 @@ from pathlib import Path
 from sklearn.metrics import mean_squared_error
 import torch
 
-from ddpg_torch import TD3, GaussianNoise
-from util import Unit, FluidSample, parameterize_kinematic_viscosity, BuoyInterpolator, get_obs_dim, get_act_dim, make_obs, set_usher_param
+from rl import TD3, GaussianNoise
+from util import Unit, FluidSample, parameterize_kinematic_viscosity, BuoyInterpolator, get_state_dim, get_action_dim, make_state, set_usher_param
 from util import get_timestamp_and_hash
 from util import read_file_int, read_file_float
 
@@ -188,8 +188,8 @@ pile.x[0] = dp.f3(0, container_width * 0.5, 0)
 agent = TD3(actor_lr=3e-4,
             critic_lr=3e-4,
             critic_weight_decay=0,
-            obs_dim=get_obs_dim(),
-            act_dim=get_act_dim(),
+            state_dim=get_state_dim(),
+            action_dim=get_action_dim(),
             expl_noise_func=GaussianNoise(std_dev=0.1),
             gamma=0.95,
             min_action=np.array([
@@ -217,7 +217,7 @@ agent = TD3(actor_lr=3e-4,
 
 agent.load_models(args.validate_model)
 
-solver_step_time_list =[]
+solver_step_time_list = []
 num_density_solve_list = []
 inference_time_list = []
 sampling_time_list = []
@@ -319,25 +319,27 @@ for dummy_itr in range(1):
         usher_sampling.sample_vorticity(runner, solver)
         usher_sampling_end = time.perf_counter()
 
-        obs_aggregated = make_obs(dp, unit, kinematic_viscosity_real,
-                                  truth_buoy_pile_real, coil_x_real,
-                                  usher_sampling, num_buoys)
+        state_aggregated = make_state(dp, unit, kinematic_viscosity_real,
+                                      truth_buoy_pile_real, coil_x_real,
+                                      usher_sampling, num_buoys)
 
         inference_start = time.perf_counter()
-        act_aggregated = agent.get_action(obs_aggregated, enable_noise=False)
+        action_aggregated = agent.get_action(state_aggregated,
+                                             enable_noise=False)
         inference_end = time.perf_counter()
-        act_aggregated_converted = agent.actor.from_normalized_action(
-            act_aggregated)
+        action_aggregated_converted = agent.actor.from_normalized_action(
+            action_aggregated)
         set_usher_param(solver.usher, dp, unit, truth_buoy_pile_real,
-                        coil_x_real, act_aggregated_converted, num_buoys)
+                        coil_x_real, action_aggregated_converted, num_buoys)
         num_steps_per_frame = 0
-        num_density_solves_in_frame =[]
+        num_density_solves_in_frame = []
         step_times_in_frame = []
         while (solver.t < target_t):
-            num_steps_per_frame+=1
+            num_steps_per_frame += 1
             solver.step()
             num_density_solves_in_frame.append(solver.num_density_solve)
-            step_times_in_frame.append(runner.custom_elapsed_dict['step(total)'])
+            step_times_in_frame.append(
+                runner.custom_elapsed_dict['step(total)'])
             # print('step', solver.num_density_solve, runner.custom_elapsed_dict['step(total)'])
             # for key in runner.launch_stat_dict:
             #     stats = runner.launch_stat_dict[key]
@@ -345,7 +347,8 @@ for dummy_itr in range(1):
             #         if record[0]>0:
             #             print(key, record[0])
         inference_time_ms = (inference_end - inference_start) * 1000
-        usher_sampling_time_ms = (usher_sampling_end - usher_sampling_start) * 1000
+        usher_sampling_time_ms = (usher_sampling_end -
+                                  usher_sampling_start) * 1000
 
         inference_time_list.append(inference_time_ms)
         sampling_time_list.append(usher_sampling_time_ms)

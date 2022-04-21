@@ -14,6 +14,7 @@ import torch
 
 from rl import TD3, OrnsteinUhlenbeckProcess, GaussianNoise
 from util import Unit, FluidSample, parameterize_kinematic_viscosity, get_state_dim, get_action_dim, make_state, set_usher_param, get_coil_x_from_com, BuoySpec
+from util import get_timestamp_and_hash
 
 parser = argparse.ArgumentParser(description='RL playground')
 parser.add_argument('--seed', type=int, default=2021)
@@ -23,6 +24,7 @@ parser.add_argument('--display', metavar='d', type=bool, default=False)
 parser.add_argument('--block-scan', metavar='s', type=bool, default=False)
 parser.add_argument('--replay-buffer', type=str, default='')
 parser.add_argument('--validate-model', type=str, default='')
+parser.add_argument('--real-h', type=str, required=True)
 args = parser.parse_args()
 
 np.random.seed(args.seed)
@@ -46,7 +48,7 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
 
-real_kernel_radius = 0.010
+real_kernel_radius = float(args.real_h)  # TODO: try changing
 unit = Unit(real_kernel_radius=real_kernel_radius,
             real_density0=1000,
             real_gravity=-9.80665)
@@ -139,10 +141,6 @@ remaining_force_time = 0.0
 
 score_history = deque(maxlen=100)
 episode_id = 0
-
-# ground_truth_dir_list = [
-#     f.path for f in os.scandir(args.truth_dir) if f.is_dir()
-# ]
 
 ground_truth_dir_list = [
     f"{args.truth_dir}/rltruth-0069a243-1224.19.26.30",
@@ -369,7 +367,23 @@ if len(args.replay_buffer) > 0:
 with open('switch', 'w') as f:
     f.write('1')
 sample_step = 0
-dir_id = 0
+# dir_id = 0
+if validation_mode:
+    model_name = args.validate_model[args.validate_model.find('/') +
+                                     1:].replace('/models/', '-')
+    timestamp_str, timestamp_hash = get_timestamp_and_hash()
+    truth_dir = args.truth_dir
+    print('model name', model_name)
+    validation_save_dir = Path(
+        f'val-{Path(args.truth_dir).name}-{model_name}-{args.real_h}-{timestamp_hash}'
+    )
+    print(validation_save_dir)
+    validation_save_dir.mkdir(parents=True)
+    validation_save_dir_visual = Path(validation_save_dir, 'visual')
+    validation_save_dir_visual.mkdir(parents=True)
+    validation_save_dir_piv = Path(validation_save_dir, 'piv')
+    validation_save_dir_piv.mkdir(parents=True)
+
 dumped_buffer = (len(args.replay_buffer) > 0)
 while True:
     with open('switch', 'r') as f:
@@ -377,16 +391,15 @@ while True:
             break
     # dir_id = 0 if args.block_scan else random.randrange(
     #     len(ground_truth_dir_list))
-    dir_id = (dir_id + 1) % len(ground_truth_dir_list)
-    ground_truth_dir = ground_truth_dir_list[dir_id]
-    print(dir_id, ground_truth_dir)
+    # dir_id = (dir_id + 1) % len(ground_truth_dir_list)
+    # ground_truth_dir = ground_truth_dir_list[dir_id]
+    # print(dir_id, ground_truth_dir)
 
-    unit = Unit(
-        real_kernel_radius=real_kernel_radius,
-        real_density0=np.load(f'{ground_truth_dir}/density0_real.npy').item(),
-        real_gravity=-9.80665)
+    unit = Unit(real_kernel_radius=real_kernel_radius,
+                real_density0=np.load(f'{truth_dir}/density0_real.npy').item(),
+                real_gravity=-9.80665)
     kinematic_viscosity_real = np.load(
-        f'{ground_truth_dir}/kinematic_viscosity_real.npy').item()
+        f'{truth_dir}/kinematic_viscosity_real.npy').item()
 
     cn.set_kernel_radius(kernel_radius)
     cn.set_particle_attr(particle_radius, particle_mass, density0)
@@ -396,14 +409,10 @@ while True:
         parameterize_kinematic_viscosity(kinematic_viscosity_real))
 
     fluid_mass = unit.from_real_mass(
-        np.load(f'{ground_truth_dir}/fluid_mass.npy').item())
+        np.load(f'{truth_dir}/fluid_mass.npy').item())
     num_particles = int(fluid_mass / cn.particle_mass)
     solver.num_particles = num_particles
     print('num_particles', num_particles)
-
-    num_buoys = dp.Pile.get_size_from_file(f'{ground_truth_dir}/0.pile') - 2
-    solver.usher.reset()
-    solver.usher.num_ushers = num_buoys
 
     initial_particle_x_filename = f'{args.cache_dir}/x{num_particles}.alu'
     initial_particle_v_filename = f'{args.cache_dir}/v{num_particles}.alu'
@@ -462,18 +471,18 @@ while True:
 
     solver.reset_solving_var()
     solver.t = 0
-    sampling = FluidSample(dp, f'{ground_truth_dir}/sample-x.alu')
+    sampling = FluidSample(dp, f'{truth_dir}/sample-x.alu')
     mask = dp.create_coated((sampling.num_samples), 1, np.uint32)
     sampling.sample_x.scale(unit.from_real_length(1))
     ground_truth = dp.create_coated_like(sampling.sample_data3)
     sum_v2 = unit.from_real_velocity_mse(
-        np.load(f'{ground_truth_dir}/sum_v2.npy').item())
+        np.load(f'{truth_dir}/sum_v2.npy').item())
     max_v2 = unit.from_real_velocity_mse(
-        np.load(f'{ground_truth_dir}/max_v2.npy').item())
+        np.load(f'{truth_dir}/max_v2.npy').item())
     dp.map_graphical_pointers()
     solver.update_particle_neighbors()
-    truth_buoy_pile_real.read_file(f'{ground_truth_dir}/0.pile', num_buoys, 0,
-                                   1)
+    num_buoys = dp.Pile.get_size_from_file(f'{truth_dir}/0.pile') - 2
+    truth_buoy_pile_real.read_file(f'{truth_dir}/0.pile', num_buoys, 0, 1)
     coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
                                       truth_buoy_pile_real, num_buoys)
     # set positions for sampling around buoys in simulation
@@ -503,11 +512,13 @@ while True:
     visual_x_scaled = dp.create_coated_like(solver.particle_x)
 
     num_frames_in_scenario = 0
+    sim_v_np = np.zeros((num_frames - 1, sampling.num_samples, 3))
+    sim_errors = np.zeros(num_frames - 1)
     for frame_id in range(num_frames - 1):
         num_frames_in_scenario += 1
         target_t = unit.from_real_time(frame_id * truth_real_interval)
 
-        truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id}.pile',
+        truth_buoy_pile_real.read_file(f'{truth_dir}/{frame_id}.pile',
                                        num_buoys, 0, 1)
         coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
                                           truth_buoy_pile_real, num_buoys)
@@ -536,14 +547,14 @@ while True:
                 visual_x_scaled.set_from(solver.particle_x)
                 visual_x_scaled.scale(unit.to_real_length(1))
                 visual_x_scaled.write_file(
-                    f'val/visual-x-{next_visual_frame_id}.alu',
+                    f'{str(validation_save_dir_visual)}/visual-x-{next_visual_frame_id}.alu',
                     solver.num_particles)
-                pile.write_file(f'val/visual-{next_visual_frame_id}.pile',
-                                unit.to_real_length(1),
-                                unit.to_real_velocity(1),
-                                unit.to_real_angular_velocity(1))
+                pile.write_file(
+                    f'{str(validation_save_dir_visual)}/visual-{next_visual_frame_id}.pile',
+                    unit.to_real_length(1), unit.to_real_velocity(1),
+                    unit.to_real_angular_velocity(1))
                 next_visual_frame_id += 1
-        truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id+1}.pile',
+        truth_buoy_pile_real.read_file(f'{truth_dir}/{frame_id+1}.pile',
                                        num_buoys, 0, 1)
         coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
                                           truth_buoy_pile_real, num_buoys)
@@ -562,13 +573,15 @@ while True:
         sampling.prepare_neighbor_and_boundary(runner, solver)
         simulation_v_real = sampling.sample_velocity(runner, solver)
         simulation_v_real.scale(unit.to_real_velocity(1))
+        sim_v_np[frame_id] = simulation_v_real.get()
 
-        ground_truth.read_file(f'{ground_truth_dir}/v-{frame_id+1}.alu')
-        mask.read_file(f'{ground_truth_dir}/mask-{frame_id+1}.alu')
+        ground_truth.read_file(f'{truth_dir}/v-{frame_id+1}.alu')
+        mask.read_file(f'{truth_dir}/mask-{frame_id+1}.alu')
         reconstruction_error = runner.calculate_mse_masked(
             simulation_v_real, ground_truth, mask, sampling.num_samples)
         reward = -reconstruction_error / max_v2
         error_sum += reconstruction_error
+        sim_errors[frame_id] = reconstruction_error
         early_termination = False
         grid_anomaly = dp.coat(solver.grid_anomaly).get()[0]
         if reward < -3 or grid_anomaly > 0:
@@ -589,17 +602,21 @@ while True:
                 agent.learn()
         else:
             # NOTE: Saving all required data for animation. Only for validating a single scenario.
-            np.save(f'val/action-{frame_id}.npy', action_aggregated_converted)
-            np.save(f'val/state-{frame_id}.npy', state_aggregated)
+            np.save(f'{str(validation_save_dir_piv)}/act-{frame_id}.npy',
+                    action_aggregated_converted)
+            np.save(f'{str(validation_save_dir_piv)}/state-{frame_id}.npy',
+                    state_aggregated)
             buoys_q0, buoys_q1 = agent.get_value(state_aggregated,
                                                  action_aggregated)
-            np.save(f'val/value0-{frame_id}.npy',
+            np.save(f'{str(validation_save_dir_piv)}/value0-{frame_id}.npy',
                     buoys_q0.cpu().detach().numpy())
-            np.save(f'val/value1-{frame_id}.npy',
+            np.save(f'{str(validation_save_dir_piv)}/value1-{frame_id}.npy',
                     buoys_q1.cpu().detach().numpy())
-            simulation_v_real.write_file(f'val/v-{frame_id}.alu',
-                                         sampling.num_samples)
-            np.save(f'val/reward-{frame_id}.npy', reward)
+            simulation_v_real.write_file(
+                f'{str(validation_save_dir_piv)}/v-{frame_id}.alu',
+                sampling.num_samples)
+            np.save(f'{str(validation_save_dir_piv)}/reward-{frame_id}.npy',
+                    reward)
 
         sample_step += 1
         state_aggregated = new_state_aggregated
@@ -624,7 +641,9 @@ while True:
         log_object['score100'] = np.mean(list(score_history))
     wandb.log(log_object)
     if validation_mode:
-        np.save('val/score.npy', score)
+        np.save(f'{str(validation_save_dir_piv)}/score.npy', score)
+        np.save(f'{str(validation_save_dir_piv)}/sim_v_real.npy', sim_v_np)
+        np.save(f'{str(validation_save_dir_piv)}/sim_errors.npy', sim_errors)
         print('score', score)
     dp.remove(mask)
     dp.remove(ground_truth)

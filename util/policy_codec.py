@@ -3,11 +3,11 @@ from numpy import linalg as LA
 from .quaternion import get_quat3, rotate_using_quaternion
 
 
-def get_obs_dim():
+def get_state_dim():
     return 32
 
 
-def get_act_dim():
+def get_action_dim():
     return 21
 
 
@@ -24,9 +24,9 @@ def get_coil_x_from_com(dp, unit, buoy_spec, truth_buoy_pile_real, num_buoys):
 
 
 # using real unit except density: which is relative to density0
-def make_obs(dp, unit, kinematic_viscosity_real, truth_buoy_pile_real,
-             coil_x_real, usher_sampling, num_buoys):
-    obs_aggregated = np.zeros([num_buoys, get_obs_dim()], dp.default_dtype)
+def make_state(dp, unit, kinematic_viscosity_real, truth_buoy_pile_real,
+               coil_x_real, usher_sampling, num_buoys):
+    state_aggregated = np.zeros([num_buoys, get_state_dim()], dp.default_dtype)
     buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()[:num_buoys]
     buoy_q = dp.coat(truth_buoy_pile_real.q).get()[:num_buoys]
     buoy_q3 = get_quat3(buoy_q)
@@ -49,7 +49,7 @@ def make_obs(dp, unit, kinematic_viscosity_real, truth_buoy_pile_real,
         d2 = np.sum(xij * xij, axis=1)
         dist_sort_index = np.argsort(d2)[1:]
 
-        obs_aggregated[buoy_id] = np.concatenate(
+        state_aggregated[buoy_id] = np.concatenate(
             (buoy_v_real[buoy_id], buoy_q3[buoy_id], xij[dist_sort_index[0]],
              vi - buoy_v_real[dist_sort_index[0]], xij[dist_sort_index[1]],
              vi - buoy_v_real[dist_sort_index[1]],
@@ -60,21 +60,21 @@ def make_obs(dp, unit, kinematic_viscosity_real, truth_buoy_pile_real,
              sample_container_kernel_vol[buoy_id].flatten(), unit.rdensity0 /
              1000, kinematic_viscosity_real * 1e6, num_buoys / 9),
             axis=None)
-    return obs_aggregated
+    return state_aggregated
 
 
 def set_usher_param(usher, dp, unit, truth_buoy_pile_real, coil_x_real,
-                    act_aggregated, num_buoys):
+                    action_aggregated, num_buoys):
     # [0:3] [3:6] [6:9] displacement from buoy x
-    xoffset_real = act_aggregated[:, 0:9].reshape(num_buoys, 3, 3)
+    xoffset_real = action_aggregated[:, 0:9].reshape(num_buoys, 3, 3)
     # [9:12] [12:15] [15:18] velocity offset from buoy v
-    voffset_real = act_aggregated[:, 9:18].reshape(num_buoys, 3, 3)
+    voffset_real = action_aggregated[:, 9:18].reshape(num_buoys, 3, 3)
     # [18] focal dist
-    focal_dist = act_aggregated[:, 18]
+    focal_dist = action_aggregated[:, 18]
     # [19] usher kernel radius
-    usher_kernel_radius = act_aggregated[:, 19]
+    usher_kernel_radius = action_aggregated[:, 19]
     # [20] strength
-    strength = act_aggregated[:, 20]
+    strength = action_aggregated[:, 20]
 
     buoy_v_real = dp.coat(truth_buoy_pile_real.v).get()[:num_buoys]
 

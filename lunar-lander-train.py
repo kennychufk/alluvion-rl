@@ -7,7 +7,7 @@ import torch
 import gym
 import wandb
 
-from ddpg_torch import TD3, OrnsteinUhlenbeckProcess, GaussianNoise
+from rl import TD3, OrnsteinUhlenbeckProcess, GaussianNoise
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=2021)
@@ -24,8 +24,8 @@ env.action_space.seed(args.seed)
 agent = TD3(actor_lr=1e-4,
             critic_lr=1e-3,
             critic_weight_decay=0,
-            obs_dim=8,
-            act_dim=2,
+            state_dim=8,
+            action_dim=2,
             min_action=env.action_space.low,
             max_action=env.action_space.high,
             replay_size=1000000,
@@ -42,8 +42,8 @@ config = wandb.config
 config.actor_lr = agent.actor_lr
 config.critic_lr = agent.critic_lr
 config.critic_weight_decay = agent.critic_weight_decay
-config.obs_dim = agent.obs_dim
-config.act_dim = agent.act_dim
+config.state_dim = agent.state_dim
+config.action_dim = agent.action_dim
 config.hidden_sizes = agent.hidden_sizes
 config.min_action = agent.target_actor.min_action
 config.max_action = agent.target_actor.max_action
@@ -66,21 +66,21 @@ t = 0
 episode_id = 0
 episode_t = 0
 episode_reward = 0
-obs = env.reset()
+state = env.reset()
 done = False
 
 for t in range(max_timesteps):
     episode_t += 1
     if t < agent.learn_after:
-        act = env.action_space.sample()
+        action = env.action_space.sample()
     else:
-        act = agent.get_action(obs)
+        action = agent.get_action(state)
     new_state, reward, done, info = env.step(
-        agent.actor.from_normalized_action(act))
+        agent.actor.from_normalized_action(action))
     done_int = int(done) if episode_t < env._max_episode_steps else 0
-    agent.remember(obs, act, reward, new_state, done_int)
+    agent.remember(state, action, reward, new_state, done_int)
     episode_reward += reward
-    obs = new_state
+    state = new_state
     # env.render()
     if t >= agent.learn_after:
         agent.learn()
@@ -95,7 +95,7 @@ for t in range(max_timesteps):
         episode_id += 1
         episode_t = 0
         episode_reward = 0
-        obs = env.reset()
+        state = env.reset()
         done = False
 
     if (t + 1) % 50 == 0:

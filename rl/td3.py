@@ -1,127 +1,20 @@
 import os
 
+import numpy as np
 import torch
-import random
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import numpy as np
 
-
-class OrnsteinUhlenbeckProcess:
-    def __init__(self, mu=0.0, sigma=0.2, theta=0.15, dt=1e-2):
-        self.theta = theta
-        self.mu = mu
-        self.sigma = sigma
-        self.dt = dt
-
-    def __call__(self, act_dim):
-        x = self.x_prev + self.theta * (
-            self.mu - self.x_prev) * self.dt + self.sigma * np.sqrt(
-                self.dt) * np.random.normal(size=act_dim)
-        self.x_prev = x
-        return x
-
-    def reset(self, act_dim):
-        self.x_prev = np.random.normal(self.mu, self.sigma, act_dim)
-
-
-class GaussianNoise:
-    def __init__(self, std_dev=0.1):
-        self.std_dev = std_dev
-
-    def __call__(self, act_dim):
-        return np.random.normal(0, self.std_dev, size=act_dim)
-
-    def reset(self, act_dim):
-        pass
-
-
-class ReplayBuffer:
-    def __init__(self, capacity, obs_dim, act_dim):
-        self.obs0 = np.zeros((capacity, obs_dim), dtype=np.float32)
-        self.act = np.zeros((capacity, act_dim), dtype=np.float32)
-        self.rew = np.zeros(capacity, dtype=np.float32)
-        self.obs1 = np.zeros((capacity, obs_dim), dtype=np.float32)
-        self.term = np.zeros(capacity, dtype=np.float32)
-        self.capacity = capacity
-        self.size = 0
-        self.ptr = 0
-
-    def __len__(self):
-        return self.size
-
-    def store(self, obs0, act, rew, obs1, done):
-        self.obs0[self.ptr] = obs0
-        self.act[self.ptr] = act
-        self.rew[self.ptr] = rew
-        self.obs1[self.ptr] = obs1
-        self.term[self.ptr] = 1 - done
-        if (self.ptr % 10000 == 0):
-            print('obs', obs0, obs1)
-            print('act rew term', act, rew, self.term[self.ptr])
-        self.ptr = (self.ptr + 1) % self.capacity
-        self.size = min(self.size + 1, self.capacity)
-
-    def sample_buffer(self, batch_size):
-        idxs = random.sample(range(self.size), batch_size)
-        selected_vectors = [
-            self.obs0[idxs], self.act[idxs], self.rew[idxs], self.obs1[idxs],
-            self.term[idxs]
-        ]
-        return [
-            torch.tensor(v, dtype=torch.float).to(torch.device('cuda'))
-            for v in selected_vectors
-        ]
-
-    def load(self, containing_dir):
-        self.obs0 = np.load(f'{containing_dir}/obs0.npy')
-        self.act = np.load(f'{containing_dir}/act.npy')
-        self.rew = np.load(f'{containing_dir}/rew.npy')
-        self.obs1 = np.load(f'{containing_dir}/obs1.npy')
-        self.term = np.load(f'{containing_dir}/term.npy')
-        self.capacity = np.load(f'{containing_dir}/capacity.npy').item()
-        self.size = np.load(f'{containing_dir}/size.npy').item()
-        self.ptr = np.load(f'{containing_dir}/ptr.npy').item()
-
-    def save(self, containing_dir):
-        np.save(f'{containing_dir}/obs0.npy', self.obs0)
-        np.save(f'{containing_dir}/act.npy', self.act)
-        np.save(f'{containing_dir}/rew.npy', self.rew)
-        np.save(f'{containing_dir}/obs1.npy', self.obs1)
-        np.save(f'{containing_dir}/term.npy', self.term)
-        np.save(f'{containing_dir}/capacity.npy', self.capacity)
-        np.save(f'{containing_dir}/size.npy', self.size)
-        np.save(f'{containing_dir}/ptr.npy', self.ptr)
-
-
-class MLPCritic(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
-        super(MLPCritic, self).__init__()
-        elements = []
-        layer_sizes = [obs_dim + act_dim] + list(hidden_sizes) + [1]
-        for i in range(len(layer_sizes) - 1):
-            elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
-            if i < len(layer_sizes) - 2:
-                elements.append(nn.ReLU())
-        self.net = nn.Sequential(*elements)
-
-        final_layer = [
-            m for m in self.net.modules() if not isinstance(m, nn.Sequential)
-        ][-1]
-        final_layer.weight.data.mul_(final_layer_scale)
-        final_layer.bias.data.mul_(final_layer_scale)
-
-    def forward(self, obs, act):
-        return self.net(torch.cat([obs, act], 1))
+from .replay_buffer import ReplayBuffer
 
 
 class MLPTwinCritic(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
+    def __init__(self, state_dim, action_dim, hidden_sizes, final_layer_scale):
         super(MLPTwinCritic, self).__init__()
         net0_elements = []
         net1_elements = []
-        layer_sizes = [obs_dim + act_dim] + list(hidden_sizes) + [1]
+        layer_sizes = [state_dim + action_dim] + list(hidden_sizes) + [1]
         for i in range(len(layer_sizes) - 1):
             net0_elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             net1_elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
@@ -143,61 +36,26 @@ class MLPTwinCritic(nn.Module):
         final_layer1.weight.data.mul_(final_layer_scale)
         final_layer1.bias.data.mul_(final_layer_scale)
 
-    def forward(self, obs, act):
-        sa = torch.cat([obs, act], 1)
+    def forward(self, state, action):
+        sa = torch.cat([state, action], 1)
         return self.net0(sa), self.net1(sa)
 
-    def q0(self, obs, act):
-        sa = torch.cat([obs, act], 1)
+    def q0(self, state, action):
+        sa = torch.cat([state, action], 1)
         return self.net0(sa)
 
 
-class MLPCriticMixAction(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_sizes, final_layer_scale):
-        super(MLPCriticMixAction, self).__init__()
-
-        obs_net_elements = []
-        obs_net_sizes = [obs_dim] + list(hidden_sizes)[:-1]
-        for i in range(len(obs_net_sizes) - 1):
-            obs_net_elements.append(
-                nn.Linear(obs_net_sizes[i], obs_net_sizes[i + 1]))
-            obs_net_elements.append(nn.ReLU())
-        self.obs_net = nn.Sequential(*obs_net_elements)
-
-        mix_net_elements = []
-        mix_net_sizes = list(hidden_sizes)[-1 - 1:] + [1]
-        mix_net_sizes[0] += act_dim
-        for i in range(len(mix_net_sizes) - 1):
-            mix_net_elements.append(
-                nn.Linear(mix_net_sizes[i], mix_net_sizes[i + 1]))
-            if (i < len(mix_net_sizes) - 2):
-                mix_net_elements.append(nn.ReLU())
-
-        self.mix_net = nn.Sequential(*mix_net_elements)
-
-        final_layer = [
-            m for m in self.mix_net.modules()
-            if not isinstance(m, nn.Sequential)
-        ][-1]
-        final_layer.weight.data.mul_(final_layer_scale)
-        final_layer.bias.data.mul_(final_layer_scale)
-
-    def forward(self, obs, act):
-        obs_net_out = self.obs_net(obs)
-        return self.mix_net(torch.cat([obs_net_out, act], 1))
-
-
 class MLPActor(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_sizes, min_action, max_action,
-                 final_layer_scale):
+    def __init__(self, state_dim, action_dim, hidden_sizes, min_action,
+                 max_action, final_layer_scale):
         super(MLPActor, self).__init__()
-        self.act_dim = act_dim
+        self.action_dim = action_dim
         self.min_action = min_action
         self.max_action = max_action
         self.action_half_extent = (max_action - min_action) * 0.5
         self.action_mean = (max_action + min_action) * 0.5
         elements = []
-        layer_sizes = [obs_dim] + list(hidden_sizes) + [act_dim]
+        layer_sizes = [state_dim] + list(hidden_sizes) + [action_dim]
         for i in range(len(layer_sizes) - 1):
             elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 2:
@@ -215,8 +73,8 @@ class MLPActor(nn.Module):
     def forward(self, state):
         return self.net(state)
 
-    def from_normalized_action(self, act):
-        return self.action_half_extent * act + self.action_mean
+    def from_normalized_action(self, action):
+        return self.action_half_extent * action + self.action_mean
 
 
 class TD3:
@@ -224,8 +82,8 @@ class TD3:
                  actor_lr,
                  critic_lr,
                  critic_weight_decay,
-                 obs_dim,
-                 act_dim,
+                 state_dim,
+                 action_dim,
                  hidden_sizes,
                  expl_noise_func,
                  soft_update_rate,
@@ -248,51 +106,50 @@ class TD3:
         self.actor_lr = actor_lr
         self.critic_lr = critic_lr
         self.critic_weight_decay = critic_weight_decay
-        self.obs_dim = obs_dim
-        self.act_dim = act_dim
+        self.state_dim = state_dim
+        self.action_dim = action_dim
         self.hidden_sizes = hidden_sizes
         self.policy_noise = policy_noise
         self.noise_clip = noise_clip
         self.policy_update_freq = policy_update_freq
         self.actor_final_scale = actor_final_scale
         self.critic_final_scale = critic_final_scale
-        self.memory = ReplayBuffer(replay_size, obs_dim, act_dim)
+        self.memory = ReplayBuffer(replay_size, state_dim, action_dim)
         self.train_step = 0
 
-        self.actor = MLPActor(obs_dim, act_dim, hidden_sizes, min_action,
+        self.actor = MLPActor(state_dim, action_dim, hidden_sizes, min_action,
                               max_action, actor_final_scale)
         self.actor.to(torch.device('cuda'))
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)
-        self.critic = MLPTwinCritic(obs_dim, act_dim, hidden_sizes,
+        self.critic = MLPTwinCritic(state_dim, action_dim, hidden_sizes,
                                     critic_final_scale)
         self.critic.to(torch.device('cuda'))
         self.critic_optimizer = optim.Adam(self.critic.parameters(),
                                            lr=critic_lr,
                                            weight_decay=critic_weight_decay)
 
-        self.target_actor = MLPActor(obs_dim, act_dim, hidden_sizes,
+        self.target_actor = MLPActor(state_dim, action_dim, hidden_sizes,
                                      min_action, max_action, actor_final_scale)
         self.target_actor.to(torch.device('cuda'))
-        self.target_critic = MLPTwinCritic(obs_dim, act_dim, hidden_sizes,
+        self.target_critic = MLPTwinCritic(state_dim, action_dim, hidden_sizes,
                                            critic_final_scale)
         self.target_critic.to(torch.device('cuda'))
 
         self.expl_noise_func = expl_noise_func
-        self.expl_noise_func.reset(act_dim)
+        self.expl_noise_func.reset(action_dim)
 
         TD3.hard_update(self.target_actor, self.actor)
         TD3.hard_update(self.target_critic, self.critic)
 
     def uniform_random_action(self):
-        return np.random.uniform(-1, 1, self.act_dim)
+        return np.random.uniform(-1, 1, self.action_dim)
 
-    def get_action(self, observation, enable_noise=True):
+    def get_action(self, state, enable_noise=True):
         self.actor.eval()
-        observation = torch.tensor(observation,
-                                   dtype=torch.float).to(torch.device('cuda'))
-        mu = self.actor.forward(observation).cpu().detach().numpy()
+        state = torch.tensor(state, dtype=torch.float).to(torch.device('cuda'))
+        mu = self.actor.forward(state).cpu().detach().numpy()
         if enable_noise:
-            mu += self.expl_noise_func(self.act_dim)
+            mu += self.expl_noise_func(self.action_dim)
             np.clip(mu, -1, 1, out=mu)
         self.actor.train()
         return mu
@@ -302,8 +159,8 @@ class TD3:
             torch.tensor(state, dtype=torch.float).to(torch.device('cuda')),
             torch.tensor(action, dtype=torch.float).to(torch.device('cuda')))
 
-    def remember(self, obs0, act, rew, obs1, done):
-        self.memory.store(obs0, act, rew, obs1, done)
+    def remember(self, state0, action, rew, state1, done):
+        self.memory.store(state0, action, rew, state1, done)
 
     def learn(self):
         self.train_step += 1
@@ -371,20 +228,20 @@ class TD3:
 
     def save_models(self, parent_dir):
         torch.save(self.actor.state_dict(),
-                   os.path.join(parent_dir, 'Actor_ddpg'))
+                   os.path.join(parent_dir, 'actor.pt'))
         torch.save(self.target_actor.state_dict(),
-                   os.path.join(parent_dir, 'TargetActor_ddpg'))
+                   os.path.join(parent_dir, 'target_actor.pt'))
         torch.save(self.critic.state_dict(),
-                   os.path.join(parent_dir, 'Critic_ddpg'))
+                   os.path.join(parent_dir, 'critic.pt'))
         torch.save(self.target_critic.state_dict(),
-                   os.path.join(parent_dir, 'TargetCritic_ddpg'))
+                   os.path.join(parent_dir, 'target_critic.pt'))
 
     def load_models(self, parent_dir):
         self.actor.load_state_dict(
-            torch.load(os.path.join(parent_dir, 'Actor_ddpg')))
+            torch.load(os.path.join(parent_dir, 'actor.pt')))
         self.target_actor.load_state_dict(
-            torch.load(os.path.join(parent_dir, 'TargetActor_ddpg')))
+            torch.load(os.path.join(parent_dir, 'target_actor.pt')))
         self.critic.load_state_dict(
-            torch.load(os.path.join(parent_dir, 'Critic_ddpg')))
+            torch.load(os.path.join(parent_dir, 'critic.pt')))
         self.target_critic.load_state_dict(
-            torch.load(os.path.join(parent_dir, 'TargetCritic_ddpg')))
+            torch.load(os.path.join(parent_dir, 'target_critic.pt')))
