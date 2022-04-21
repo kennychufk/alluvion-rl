@@ -238,7 +238,7 @@ class TD3:
                  policy_update_freq=2,
                  actor_final_scale=1,
                  critic_final_scale=1,
-                 learn_after=0,
+                 learn_after=25000,
                  batch_size=64):
         self.gamma = gamma
         self.soft_update_rate = soft_update_rate
@@ -307,8 +307,6 @@ class TD3:
 
     def learn(self):
         self.train_step += 1
-        if len(self.memory) < max(self.batch_size, self.learn_after):
-            return
         state, action, reward, new_state, term = self.memory.sample_buffer(
             self.batch_size)
 
@@ -326,10 +324,11 @@ class TD3:
                 self.batch_size,
                 1) + self.gamma * term.view(self.batch_size, 1) * target_q
 
-        self.critic_optimizer.zero_grad()
         current_q0, current_q1 = self.critic.forward(state, action)
-        critic_loss = F.mse_loss(target_q, current_q0) + F.mse_loss(
-            target_q, current_q1)
+        critic_loss = F.mse_loss(current_q0, target_q) + F.mse_loss(
+            current_q1, target_q)
+
+        self.critic_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_optimizer.step()
 
@@ -338,11 +337,9 @@ class TD3:
             self.critic.eval()
             for p in self.critic.parameters():
                 p.requires_grad = False
+            actor_loss = -self.critic.q0(state, self.actor(state)).mean()
 
             self.actor_optimizer.zero_grad()
-            mu = self.actor.forward(state)
-            actor_loss = -self.critic.q0(state, mu)
-            actor_loss = actor_loss.mean()
             actor_loss.backward()
             self.actor_optimizer.step()
 
@@ -354,162 +351,6 @@ class TD3:
                             self.soft_update_rate)
             TD3.soft_update(self.target_critic, self.critic,
                             self.soft_update_rate)
-
-    @staticmethod
-    def hard_update(dst_net, src_net):
-        src_state_dict = src_net.state_dict()
-        dst_state_dict = dst_net.state_dict()
-        with torch.no_grad():
-            for name, dst_param in dst_state_dict.items():
-                dst_param.copy_(src_state_dict[name])
-
-    @staticmethod
-    def soft_update(dst_net, src_net, tau):
-        src_state_dict = src_net.state_dict()
-        dst_state_dict = dst_net.state_dict()
-        with torch.no_grad():
-            for name, dst_param in dst_state_dict.items():
-                dst_param.mul_(1.0 - tau)
-                dst_param.add_(src_state_dict[name] * tau)
-
-    def save_models(self, parent_dir):
-        torch.save(self.actor.state_dict(),
-                   os.path.join(parent_dir, 'Actor_ddpg'))
-        torch.save(self.target_actor.state_dict(),
-                   os.path.join(parent_dir, 'TargetActor_ddpg'))
-        torch.save(self.critic.state_dict(),
-                   os.path.join(parent_dir, 'Critic_ddpg'))
-        torch.save(self.target_critic.state_dict(),
-                   os.path.join(parent_dir, 'TargetCritic_ddpg'))
-
-    def load_models(self, parent_dir):
-        self.actor.load_state_dict(
-            torch.load(os.path.join(parent_dir, 'Actor_ddpg')))
-        self.target_actor.load_state_dict(
-            torch.load(os.path.join(parent_dir, 'TargetActor_ddpg')))
-        self.critic.load_state_dict(
-            torch.load(os.path.join(parent_dir, 'Critic_ddpg')))
-        self.target_critic.load_state_dict(
-            torch.load(os.path.join(parent_dir, 'TargetCritic_ddpg')))
-
-
-class DDPGAgent:
-    def __init__(self,
-                 actor_lr,
-                 critic_lr,
-                 critic_weight_decay,
-                 obs_dim,
-                 act_dim,
-                 hidden_sizes,
-                 expl_noise_func,
-                 soft_update_rate,
-                 min_action,
-                 max_action,
-                 gamma=0.99,
-                 replay_size=1000000,
-                 actor_final_scale=0.051961524,
-                 critic_final_scale=0.005196152,
-                 learn_after=0,
-                 batch_size=64):
-        self.gamma = gamma
-        self.soft_update_rate = soft_update_rate
-        self.replay_size = replay_size
-        self.batch_size = batch_size
-        self.learn_after = learn_after
-        self.actor_lr = actor_lr
-        self.critic_lr = critic_lr
-        self.critic_weight_decay = critic_weight_decay
-        self.obs_dim = obs_dim
-        self.act_dim = act_dim
-        self.hidden_sizes = hidden_sizes
-        self.actor_final_scale = actor_final_scale
-        self.critic_final_scale = critic_final_scale
-        self.memory = ReplayBuffer(replay_size, obs_dim, act_dim)
-
-        self.actor = MLPActor(obs_dim, act_dim, hidden_sizes, min_action,
-                              max_action, actor_final_scale)
-        self.actor.to(torch.device('cuda'))
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)
-        self.critic = MLPCriticMixAction(obs_dim, act_dim, hidden_sizes,
-                                         critic_final_scale)
-        self.critic.to(torch.device('cuda'))
-        self.critic_optimizer = optim.Adam(self.critic.parameters(),
-                                           lr=critic_lr,
-                                           weight_decay=critic_weight_decay)
-
-        self.target_actor = MLPActor(obs_dim, act_dim, hidden_sizes,
-                                     min_action, max_action, actor_final_scale)
-        self.target_actor.to(torch.device('cuda'))
-        self.target_critic = MLPCriticMixAction(obs_dim, act_dim, hidden_sizes,
-                                                critic_final_scale)
-        self.target_critic.to(torch.device('cuda'))
-
-        self.expl_noise_func = expl_noise_func
-        self.expl_noise_func.reset(act_dim)
-
-        DDPGAgent.hard_update(self.target_actor, self.actor)
-        DDPGAgent.hard_update(self.target_critic, self.critic)
-
-    def uniform_random_action(self):
-        return np.random.uniform(-1, 1, self.act_dim)
-
-    def get_action(self, observation, enable_noise=True):
-        self.actor.eval()
-        observation = torch.tensor(observation,
-                                   dtype=torch.float).to(torch.device('cuda'))
-        mu = self.actor.forward(observation).cpu().detach().numpy()
-        if enable_noise:
-            mu += self.expl_noise_func(self.act_dim)
-            np.clip(mu, -1, 1, out=mu)
-        self.actor.train()
-        return mu
-
-    def remember(self, obs0, act, rew, obs1, done):
-        self.memory.store(obs0, act, rew, obs1, done)
-
-    def learn(self):
-        if len(self.memory) < max(self.batch_size, self.learn_after):
-            return
-        state, action, reward, new_state, term = self.memory.sample_buffer(
-            self.batch_size)
-
-        # Optimize critic
-        self.target_actor.eval()
-        self.target_critic.eval()
-        with torch.no_grad():
-            target_actions = self.target_actor.forward(new_state)
-            critic_value_ = self.target_critic.forward(new_state,
-                                                       target_actions)
-
-            target = reward.view(self.batch_size, 1) + self.gamma * term.view(
-                self.batch_size, 1) * critic_value_
-
-        self.critic_optimizer.zero_grad()
-        critic_value = self.critic.forward(state, action)
-        critic_loss = F.mse_loss(target, critic_value)
-        critic_loss.backward()
-        self.critic_optimizer.step()
-
-        # Optimize actor
-        self.critic.eval()
-        for p in self.critic.parameters():
-            p.requires_grad = False
-
-        self.actor_optimizer.zero_grad()
-        mu = self.actor.forward(state)
-        actor_loss = -self.critic.forward(state, mu)
-        actor_loss = actor_loss.mean()
-        actor_loss.backward()
-        self.actor_optimizer.step()
-
-        self.critic.train()
-        for p in self.critic.parameters():
-            p.requires_grad = True
-
-        DDPGAgent.soft_update(self.target_actor, self.actor,
-                              self.soft_update_rate)
-        DDPGAgent.soft_update(self.target_critic, self.critic,
-                              self.soft_update_rate)
 
     @staticmethod
     def hard_update(dst_net, src_net):

@@ -13,25 +13,29 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=2021)
 args = parser.parse_args()
 
-np.random.seed(args.seed)
 random.seed(args.seed)
+np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 
 env = gym.make('LunarLanderContinuous-v2')
 env.seed(args.seed)
+env.action_space.seed(args.seed)
 
 agent = TD3(actor_lr=1e-4,
             critic_lr=1e-3,
-            critic_weight_decay=1e-2,
+            critic_weight_decay=0,
             obs_dim=8,
             act_dim=2,
             min_action=env.action_space.low,
             max_action=env.action_space.high,
             replay_size=1000000,
-            expl_noise_func=OrnsteinUhlenbeckProcess(),
+            expl_noise_func=GaussianNoise(),
             hidden_sizes=[400, 300],
             soft_update_rate=0.001,
-            batch_size=64)
+            batch_size=64,
+            actor_final_scale=0.051961524,
+            critic_final_scale=0.005196152)
+max_timesteps = 1000000
 
 wandb.init(project='rl-continuous')
 config = wandb.config
@@ -48,40 +52,51 @@ config.gamma = agent.gamma
 config.replay_size = agent.replay_size
 config.actor_final_scale = agent.actor_final_scale
 config.critic_final_scale = agent.critic_final_scale
-config.sigma = agent.expl_noise_func.sigma
-config.theta = agent.expl_noise_func.theta
 config.learn_after = agent.learn_after
 config.seed = args.seed
+config.max_timesteps = max_timesteps
 
 wandb.watch(agent.critic)
 
 score_history = deque(maxlen=100)
 with open('switch', 'w') as f:
     f.write('1')
-i = 0
-sample_step = 0
-for iteration_count in range(2000):
-    with open('switch', 'r') as f:
-        if f.read(1) == '0':
-            break
-    obs = env.reset()
-    done = False
-    score = 0
-    while not done:
-        if sample_step < agent.learn_after:
-            act = agent.uniform_random_action()
-        else:
-            act = agent.get_action(obs)
-        new_state, reward, done, info = env.step(act)
-        agent.remember(obs, act, reward, new_state, int(done))
-        agent.learn()
-        sample_step += 1
-        score += reward
-        obs = new_state
-        # env.render()
-    score_history.append(score)
+t = 0
 
-    if i % 50 == 0:
+episode_id = 0
+episode_t = 0
+episode_reward = 0
+obs = env.reset()
+done = False
+
+for t in range(max_timesteps):
+    episode_t += 1
+    if t < agent.learn_after:
+        act = env.action_space.sample()
+    else:
+        act = agent.get_action(obs)
+    new_state, reward, done, info = env.step(
+        agent.actor.from_normalized_action(act))
+    done_int = int(done) if episode_t < env._max_episode_steps else 0
+    agent.remember(obs, act, reward, new_state, done_int)
+    episode_reward += reward
+    obs = new_state
+    # env.render()
+    if t >= agent.learn_after:
+        agent.learn()
+
+    if done:
+        score_history.append(episode_reward)
+        wandb.log({
+            'score': episode_reward,
+            'score100': np.mean(list(score_history))
+        })
+
+        episode_id += 1
+        episode_t = 0
+        episode_reward = 0
+        obs = env.reset()
+        done = False
+
+    if (t + 1) % 50 == 0:
         agent.save_models(wandb.run.dir)
-    wandb.log({'score': score, 'score100': np.mean(list(score_history))})
-    i += 1
