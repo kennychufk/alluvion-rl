@@ -53,7 +53,7 @@ def pressurize(dp, solver, osampling):
         osampling.density_stat[osampling.sampling_cursor] = dp.coat(
             solver.particle_density).get()
         osampling.r_stat[osampling.sampling_cursor] = LA.norm(dp.coat(
-            solver.particle_x).get()[:, [0, 2]],
+            solver.particle_x).get(solver.num_particles)[:, [0, 2]],
                                                               axis=1)
         osampling.aggregate()
     else:

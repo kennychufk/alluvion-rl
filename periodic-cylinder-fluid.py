@@ -93,12 +93,16 @@ while True:
                  sign=-1)
     pile.reallocate_kinematics_on_device()
 
-    dp.map_graphical_pointers()
     for substep_id in range(1000):
+        display_proxy.draw()
+        dp.map_graphical_pointers()
         solver.step_wrap1()
         if (substep_id % 50 == 0):
             solver.particle_v.set_zero()
             solver.reset_solving_var()
+        solver.normalize(solver.particle_v, particle_normalized_attr, 0, 2)
+        dp.unmap_graphical_pointers()
+    dp.map_graphical_pointers()
     densities = dp.coat(solver.particle_density).get()
     mean_density = np.mean(densities)
     print('density at', current_radius, np.mean(densities), np.min(densities),

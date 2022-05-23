@@ -3,6 +3,7 @@ import alluvion as al
 
 
 class BuoySpec:
+
     def __init__(self, dp, unit, map_radial_size=24):
         self.radius = unit.from_real_length(3.0088549658278843e-3)
         self.height = unit.from_real_length(38.5e-3)

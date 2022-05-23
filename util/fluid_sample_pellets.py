@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class FluidSample:
+class FluidSamplePellets:
 
     def __init__(self, dp, x_src):
         set_with_file = isinstance(x_src, str)
@@ -12,14 +12,14 @@ class FluidSample:
         self.sample_data3 = dp.create_coated((self.num_samples), 3)
         self.sample_vort = dp.create_coated((self.num_samples), 3)
         self.sample_data1 = dp.create_coated((self.num_samples), 1)
-        self.sample_boundary = dp.create_coated(
-            (dp.cni.num_boundaries, self.num_samples), 4)
-        self.sample_boundary_kernel = dp.create_coated(
-            (dp.cni.num_boundaries, self.num_samples), 4)
         self.sample_neighbors = dp.create_coated(
             (self.num_samples, dp.cni.max_num_neighbors_per_particle), 4)
         self.sample_num_neighbors = dp.create_coated((self.num_samples), 1,
                                                      np.uint32)
+        self.sample_pellet_neighbors = dp.create_coated(
+            (self.num_samples, dp.cni.max_num_neighbors_per_particle), 4)
+        self.sample_num_pellet_neighbors = dp.create_coated((self.num_samples),
+                                                            1, np.uint32)
         if set_with_file:
             self.sample_x.read_file(x_src)
         else:
@@ -31,33 +31,26 @@ class FluidSample:
         self.dp.remove(self.sample_data3)
         self.dp.remove(self.sample_vort)
         self.dp.remove(self.sample_data1)
-        self.dp.remove(self.sample_boundary)
-        self.dp.remove(self.sample_boundary_kernel)
         self.dp.remove(self.sample_neighbors)
         self.dp.remove(self.sample_num_neighbors)
+        self.dp.remove(self.sample_pellet_neighbors)
+        self.dp.remove(self.sample_num_pellet_neighbors)
 
     def prepare_neighbor_and_boundary(self, runner, solver):
         solver.update_particle_neighbors()
-        runner.launch_make_neighbor_list(self.sample_x, solver.pid,
-                                         solver.pid_length,
-                                         self.sample_neighbors,
-                                         self.sample_num_neighbors,
-                                         solver.grid_anomaly, self.num_samples)
-        solver.sample_all_boundaries(self.sample_x, self.sample_boundary,
-                                     self.sample_boundary_kernel,
-                                     self.num_samples)
+        runner.launch_make_bead_pellet_neighbor_list(
+            self.sample_x, solver.pid, solver.pid_length,
+            self.sample_neighbors, self.sample_num_neighbors,
+            self.sample_pellet_neighbors, self.sample_num_pellet_neighbors,
+            solver.grid_anomaly, solver.max_num_particles, self.num_samples)
 
     def prepare_neighbor_and_boundary_wrap1(self, runner, solver):
         solver.update_particle_neighbors_wrap1()
-        runner.launch_make_neighbor_list_wrap1(self.sample_x, solver.pid,
-                                               solver.pid_length,
-                                               self.sample_neighbors,
-                                               self.sample_num_neighbors,
-                                               solver.grid_anomaly,
-                                               self.num_samples)
-        solver.sample_all_boundaries(self.sample_x, self.sample_boundary,
-                                     self.sample_boundary_kernel,
-                                     self.num_samples)
+        runner.launch_make_bead_pellet_neighbor_list_wrap1(
+            self.sample_x, solver.pid, solver.pid_length,
+            self.sample_neighbors, self.sample_num_neighbors,
+            self.sample_pellet_neighbors, self.sample_num_pellet_neighbors,
+            solver.grid_anomaly, solver.max_num_particles, self.num_samples)
 
     def sample_vector3(self, runner, solver, fluid_var):
         runner.launch_sample_fluid(self.sample_x, solver.particle_x,
@@ -68,34 +61,23 @@ class FluidSample:
         return self.sample_data3
 
     def sample_density(self, runner):
-        runner.launch_sample_density(self.sample_x, self.sample_neighbors,
-                                     self.sample_num_neighbors,
-                                     self.sample_data1,
-                                     self.sample_boundary_kernel,
-                                     self.num_samples)
+        runner.launch_sample_density_with_pellets(
+            self.sample_x, self.sample_neighbors, self.sample_num_neighbors,
+            self.sample_pellet_neighbors, self.sample_num_pellet_neighbors,
+            self.sample_data1, self.num_samples)
         return self.sample_data1
 
     def sample_velocity(self, runner, solver):
-        runner.launch_sample_velocity(
+        runner.launch_sample_velocity_with_pellets(
             self.sample_x, solver.particle_x, solver.particle_density,
             solver.particle_v, self.sample_neighbors,
-            self.sample_num_neighbors, self.sample_data3, self.sample_boundary,
-            self.sample_boundary_kernel, solver.pile.x_device,
-            solver.pile.v_device, solver.pile.omega_device, self.num_samples)
+            self.sample_num_neighbors, self.sample_data3,
+            self.sample_pellet_neighbors, self.sample_num_pellet_neighbors,
+            self.num_samples)
         return self.sample_data3
 
-    def sample_vorticity(self, runner, solver):
-        runner.launch_sample_vorticity(
-            self.sample_x, solver.particle_x, solver.particle_density,
-            solver.particle_v, self.sample_neighbors,
-            self.sample_num_neighbors, self.sample_data3, self.sample_vort,
-            self.sample_boundary, self.sample_boundary_kernel,
-            solver.pile.x_device, solver.pile.v_device,
-            solver.pile.omega_device, self.num_samples)
-        return self.sample_vort
 
-
-class OptimSampling(FluidSample):
+class OptimSamplingPellets(FluidSamplePellets):
 
     def __init__(self, dp, pipe_length, pipe_radius, ts, num_particles):
         self.ts = ts
