@@ -54,22 +54,7 @@ cn.viscosity, cn.boundary_viscosity = unit.from_real_kinematic_viscosity(
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
-agitator_options = [
-    'bunny/bunny',
-    '03797390/ec846432f3ebedf0a6f32a8797e3b9e9',
-    '03046257/757fd88d3ddca2403406473757712946',
-    '02942699/9db4b2c19c858a36eb34db531a289b8e',
-    '03261776/1d4f9c324d6388a9b904f4192b538029',
-    '03325088/daa26435e1603392b7a867e9b35a1295',
-    '03759954/35f36e337df50fcb92b3c4741299c1af',
-    # '04401088/e5bb37415abcf3b7e1c1039f91f43fda',
-    # '04530566/66a90b7b92ff2549f2635cfccf45023',
-    # '03513137/91c0193d38f0c5338c9affdacaf55648',
-    # '03636649/83353863ea1349682ebeb1e6a8111f53'
-]
-
-agitator_selected_id = 0
-agitator_option = agitator_options[agitator_selected_id]
+agitator_option = 'stirrer/stirrer'
 
 agitator_model_dir = f'{args.shape_dir}/{agitator_option}/models'
 agitator_mesh_filename = f'{agitator_model_dir}/manifold2-decimate-2to-8.obj'
@@ -150,12 +135,6 @@ for i in range(num_buoys):
                                    container_distance.aabb_max),
                                q=dp.f4(0, 0, 0, 1),
                                display_mesh=buoy.mesh)
-    while (has_collision(pile, buoy_id)):
-        print('has collision', pile.x[buoy_id])
-        pile.x[buoy_id] = get_random_position(container_distance.aabb_min,
-                                              container_distance.aabb_max)
-for i in range(num_buoys):
-    print(f"{i+1}: {pile.x[i+1]}")
 dp.remove(buoy_pellet_x)
 pile.hint_identical_sequence(1, pile.get_size())
 
@@ -185,20 +164,30 @@ agitator_id = pile.add_pellets(agitator_distance,
                                agitator_res,
                                pellets=agitator_pellet_x,
                                sign=1,
-                               mass=agitator_mass,
+                               mass=0,
                                restitution=0.8,
                                friction=0.3,
                                inertia_tensor=agitator_inertia,
-                               x=get_random_position(
-                                   container_distance.aabb_min,
-                                   container_distance.aabb_max),
-                               q=get_random_quat(),
                                display_mesh=agitator_mesh)
+exp_dir = '/media/kennychufk/vol1bk0/20210415_162749-laser-too-high/'
+
+
+def transform_robot_position(pos_real):
+    return pos_real + dp.f3(
+        0.52, -(0.14294 + 0.015 + 0.005) - 0.12,
+        0)  # TODO: y offset is arbitrary, need verification
+
+
+interpolator = RigidInterpolator(dp, unit, f'{exp_dir}/Trace.csv')
+pile.x[agitator_id] = unit.from_real_length(
+    transform_robot_position(interpolator.get_x_real_from_real_t(0)))
 dp.remove(agitator_pellet_x)
-while has_collision(pile, agitator_id):
-    pile.x[agitator_id] = get_random_position(container_distance.aabb_min,
+for i in range(num_buoys):
+    buoy_id = i + 1
+    while (has_collision(pile, buoy_id)):
+        print('has collision', pile.x[buoy_id])
+        pile.x[buoy_id] = get_random_position(container_distance.aabb_min,
                                               container_distance.aabb_max)
-    pile.q[agitator_id] = get_random_quat()
 
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
@@ -324,29 +313,6 @@ real_sample_x.write_file(f'{frame_directory}/sample-x.alu',
 dp.remove(real_sample_x)
 # =========== end of save config
 
-
-class OrnsteinUhlenbeckProcess:
-
-    def __init__(self, dim, mu=0.0, sigma=0.2, theta=0.15):
-        self.theta = theta
-        self.mu = mu
-        self.sigma = sigma
-        self.dim = dim
-        self.x_prev = np.zeros(dim)
-
-    def __call__(self, dt):
-        x = self.x_prev + self.theta * (
-            self.mu - self.x_prev
-        ) * dt + self.sigma * np.sqrt(dt) * np.random.normal(size=self.dim)
-        self.x_prev = x
-        return x
-
-
-linear_acc_rp = OrnsteinUhlenbeckProcess(3,
-                                         sigma=np.array([8, 2, 8]),
-                                         theta=0.35)
-angular_acc_rp = OrnsteinUhlenbeckProcess(3, sigma=10 * np.pi)
-
 truth_real_freq = 100.0
 truth_real_interval = 1.0 / truth_real_freq
 next_truth_frame_id = 0
@@ -357,7 +323,7 @@ next_visual_frame_id = 0
 visual_x_scaled = dp.create_coated_like(solver.particle_x)
 visual_v2_scaled = dp.create_coated_like(solver.particle_cfl_v2)
 
-target_t = unit.from_real_time(10.0)
+target_t = unit.from_real_time(20.0)
 last_tranquillized = 0.0
 rest_state_achieved = False
 
@@ -420,24 +386,10 @@ while not rest_state_achieved or solver.t < target_t:
             agitator_v = np.array(
                 [agitator_v_al.x, agitator_v_al.y, agitator_v_al.z],
                 dp.default_dtype)
-            agitator_omega = np.array([
-                agitator_omega_al.x, agitator_omega_al.y, agitator_omega_al.z
-            ], dp.default_dtype)
 
-            agitator_x = pile.x[agitator_id]
-            agitator_angular_acc = unit.from_real_angular_acceleration(
-                angular_acc_rp(solver.dt))
-            agitator_a = unit.from_real_acceleration(linear_acc_rp(solver.dt))
-            # print('start force', agitator_a, agitator_angular_acc)
-
-            agitator_v += agitator_a * solver.dt
-            agitator_omega += agitator_angular_acc * solver.dt
-
-            pile.v[agitator_id] = dp.f3(agitator_v[0], agitator_v[1],
-                                        agitator_v[2])
-            pile.omega[agitator_id] = dp.f3(agitator_omega[0],
-                                            agitator_omega[1],
-                                            agitator_omega[2])
+            pile.v[agitator_id] = interpolator.get_v(solver.t)
+            pile.x[agitator_id] = unit.from_real_length(
+                transform_robot_position(interpolator.get_x_real(solver.t)))
         else:  # if not rest_state_achieved
             v_rms = np.sqrt(
                 runner.sum(solver.particle_cfl_v2, solver.num_particles) /
@@ -480,7 +432,7 @@ if args.render:
         "-s",
         "0",
         "-e",
-        "300",
+        "600",
         "-d",
         f"/home/kennychufk/workspace/pythonWs/test-run-al-outside/{frame_directory}",
         "--output-prefix",

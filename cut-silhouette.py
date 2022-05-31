@@ -14,7 +14,7 @@ unit = Unit(real_kernel_radius=1, real_density0=1,
             real_gravity=-1)  # use real-world units
 agitator_exclusion_dist = 0.06  # in real units
 buoy_exclusion_dist = 0.01
-original_kernel_radius = 0.005  # NOTE: for scaling agitator
+original_kernel_radius = 2**-8  # NOTE: for scaling agitator
 
 dp = al.Depot(np.float32)
 runner = dp.Runner()
@@ -42,11 +42,9 @@ for i in range(num_buoys):
 agitator_mesh = al.Mesh()
 agitator_option = np.load(f'{args.truth_dir}/agitator_option.npy').item()
 agitator_model_dir = f'{args.shape_dir}/{agitator_option}/models'
-agitator_mesh_filename = f'{agitator_model_dir}/manifold2-decimate-pa.obj'
+agitator_mesh_filename = f'{agitator_model_dir}/manifold2-decimate-2to-8.obj'
 agitator_mesh.set_obj(agitator_mesh_filename)
-agitator_mesh.scale(
-    np.load(f'{args.truth_dir}/agitator_scale.npy').item() *
-    original_kernel_radius)  # NOTE: the loaded scale is not in real units
+agitator_mesh.scale(original_kernel_radius)  # NOTE: the loaded scale is not in real units
 agitator_triangle_mesh = dp.TriangleMesh()
 agitator_mesh.copy_to(agitator_triangle_mesh)
 agitator_distance = dp.MeshDistance.create(
@@ -54,6 +52,7 @@ agitator_distance = dp.MeshDistance.create(
     offset=agitator_exclusion_dist)  # NOTE: remove distance offset
 agitator_extent = agitator_distance.aabb_max - agitator_distance.aabb_min
 agitator_res_float = agitator_extent / 0.0048  # NOTE: does not need to be the same resolution with the original
+print('agitator_extent', agitator_extent)
 agitator_res = al.uint3(int(agitator_res_float.x), int(agitator_res_float.y),
                         int(agitator_res_float.z))
 print('agitator_res', agitator_res)

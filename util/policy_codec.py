@@ -4,7 +4,7 @@ from .quaternion import get_quat3, rotate_using_quaternion
 
 
 def get_state_dim():
-    return 32
+    return 23
 
 
 def get_action_dim():
@@ -33,14 +33,14 @@ def make_state(dp, unit, kinematic_viscosity_real, truth_buoy_pile_real,
 
     sample_v_real = unit.to_real_velocity(usher_sampling.sample_data3.get())
     sample_density_relative = usher_sampling.sample_data1.get()
-    sample_vort_real = unit.to_real_angular_velocity(
-        usher_sampling.sample_vort.get())
-    sample_container_kernel_sim = usher_sampling.sample_boundary_kernel.get(
-    )[0]
-    sample_container_kernel_vol_grad_real = unit.to_real_per_length(
-        sample_container_kernel_sim[:, :3])
-    sample_container_kernel_vol = sample_container_kernel_sim[:,
-                                                              3]  # dimensionless
+    # sample_vort_real = unit.to_real_angular_velocity(
+    #     usher_sampling.sample_vort.get())
+    # sample_container_kernel_sim = usher_sampling.sample_boundary_kernel.get(
+    # )[0]
+    # sample_container_kernel_vol_grad_real = unit.to_real_per_length(
+    #     sample_container_kernel_sim[:, :3])
+    # sample_container_kernel_vol = sample_container_kernel_sim[:,
+    #                                                           3]  # dimensionless
 
     for buoy_id in range(num_buoys):
         xi = coil_x_real[buoy_id]
@@ -55,10 +55,12 @@ def make_state(dp, unit, kinematic_viscosity_real, truth_buoy_pile_real,
              vi - buoy_v_real[dist_sort_index[1]],
              sample_v_real[buoy_id].flatten(),
              sample_density_relative[buoy_id],
-             sample_vort_real[buoy_id].flatten(),
-             sample_container_kernel_vol_grad_real[buoy_id].flatten(),
-             sample_container_kernel_vol[buoy_id].flatten(), unit.rdensity0 /
-             1000, kinematic_viscosity_real * 1e6, num_buoys / 9),
+             # sample_vort_real[buoy_id].flatten(),
+             # sample_container_kernel_vol_grad_real[buoy_id].flatten(),
+             # sample_container_kernel_vol[buoy_id].flatten(),
+             # unit.rdensity0 / 1000,
+             # kinematic_viscosity_real * 1e6,
+             num_buoys / 10),
             axis=None)
     return state_aggregated
 
