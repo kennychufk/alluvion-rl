@@ -179,8 +179,8 @@ min_usher_kernel_radius = 0.02
 max_usher_kernel_radius = 0.06
 max_strength = 720
 
-agent = TD3(actor_lr=1e-6,
-            critic_lr=1e-6,
+agent = TD3(actor_lr=3e-4,
+            critic_lr=3e-4,
             critic_weight_decay=0,
             state_dim=get_state_dim(),
             action_dim=get_action_dim(),
@@ -201,12 +201,12 @@ agent = TD3(actor_lr=1e-6,
                 +max_voffset, +max_voffset, max_focal_dist,
                 max_usher_kernel_radius, max_strength
             ]),
-            learn_after=100000,
+            learn_after=10000,
             replay_size=36000000,
             hidden_sizes=[2048, 2048, 1024],
-            actor_final_scale=1 / np.sqrt(1000),
-            critic_final_scale=0.1 / np.sqrt(1000),
-            soft_update_rate=0.0005,
+            actor_final_scale=0.05 / np.sqrt(1000),
+            critic_final_scale=1,
+            soft_update_rate=0.005,
             batch_size=256)
 if len(args.replay_buffer) > 0:
     agent.memory.load(args.replay_buffer)
@@ -270,11 +270,11 @@ while True:
         np.load(f'{ground_truth_dir}/fluid_mass.npy').item())
     num_particles = int(fluid_mass / cn.particle_mass)
     solver.num_particles = num_particles
-    print('num_particles', num_particles)
 
     num_buoys = dp.Pile.get_size_from_file(f'{ground_truth_dir}/0.pile') - 2
     solver.usher.reset()
     solver.usher.num_ushers = num_buoys
+    print('num_particles', num_particles, 'num_buoys', num_buoys)
 
     initial_particle_x_filename = f'{args.cache_dir}/playground_bead_x-2to-6.alu'
     initial_particle_v_filename = f'{args.cache_dir}/playground_bead_v-2to-6.alu'
@@ -343,8 +343,10 @@ while True:
         np.load(f'{ground_truth_dir}/max_v2.npy').item())
     dp.map_graphical_pointers()
     solver.update_particle_neighbors()
-    truth_buoy_pile_real.read_file(f'{ground_truth_dir}/0.pile', num_buoys, 0,
-                                   1)
+    truth_buoy_pile_real.read_file(f'{ground_truth_dir}/0.pile',
+                                   num_rigids=num_buoys,
+                                   dst_offset=0,
+                                   src_offset=1)
     coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
                                       truth_buoy_pile_real, num_buoys)
     # set positions for sampling around buoys in simulation
@@ -379,7 +381,9 @@ while True:
         target_t = unit.from_real_time(frame_id * truth_real_interval)
 
         truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id}.pile',
-                                       num_buoys, 0, 1)
+                                       num_rigids=num_buoys,
+                                       dst_offset=0,
+                                       src_offset=1)
         coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
                                           truth_buoy_pile_real, num_buoys)
         coil_x_np = unit.from_real_length(coil_x_real)
@@ -415,7 +419,9 @@ while True:
                                 unit.to_real_angular_velocity(1))
                 next_visual_frame_id += 1
         truth_buoy_pile_real.read_file(f'{ground_truth_dir}/{frame_id+1}.pile',
-                                       num_buoys, 0, 1)
+                                       num_rigids=num_buoys,
+                                       dst_offset=0,
+                                       src_offset=1)
         coil_x_real = get_coil_x_from_com(dp, unit, buoy_spec,
                                           truth_buoy_pile_real, num_buoys)
         coil_x_np = unit.from_real_length(coil_x_real)
@@ -500,7 +506,6 @@ while True:
     dp.remove(mask)
     dp.remove(ground_truth)
     dp.remove(visual_x_scaled)
-    dp.remove(ground_truth)
     sampling.destroy_variables()
     episode_id += 1
     if args.block_scan:
