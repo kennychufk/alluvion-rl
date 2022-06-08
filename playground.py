@@ -225,6 +225,11 @@ class Environment:
         self.simulation_sampling.sample_x.scale(self.unit.from_real_length(1))
         self.ground_truth_v = self.dp.create_coated_like(
             self.simulation_sampling.sample_data3)
+        self.buoy_v_ma95 = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
+        self.buoy_v_ma80 = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
+        self.buoy_v_ma70 = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
+        self.buoy_v_ma40 = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
+
         self.dp.map_graphical_pointers()
         self.solver.update_particle_neighbors()
         state_aggregated = self.collect_state(0)
@@ -237,6 +242,14 @@ class Environment:
             f'{self.truth_dir}/{episode_t}.pile')
         buoy_x_real = truth_pile_x[1:1 + self.num_buoys]
         self.buoy_v_real = truth_pile_v[1:1 + self.num_buoys]
+        self.buoy_v_ma95 = 0.95 * self.buoy_v_real + (1 -
+                                                      0.95) * self.buoy_v_ma95
+        self.buoy_v_ma80 = 0.80 * self.buoy_v_real + (1 -
+                                                      0.80) * self.buoy_v_ma80
+        self.buoy_v_ma70 = 0.70 * self.buoy_v_real + (1 -
+                                                      0.70) * self.buoy_v_ma70
+        self.buoy_v_ma40 = 0.40 * self.buoy_v_real + (1 -
+                                                      0.40) * self.buoy_v_ma40
         buoy_q = truth_pile_q[1:1 + self.num_buoys]
         self.coil_x_real = get_coil_x_from_com(self.dp, self.unit,
                                                self.buoy_spec, buoy_x_real,
@@ -251,8 +264,10 @@ class Environment:
         self.usher_sampling.sample_velocity(self.runner, self.solver)
         # self.usher_sampling.sample_vorticity(self.runner, self.solver)
         return make_state(self.dp, self.unit, self.kinematic_viscosity_real,
-                          self.buoy_v_real, buoy_q, self.coil_x_real,
-                          self.usher_sampling, self.num_buoys)
+                          self.buoy_v_real, self.buoy_v_ma95, self.buoy_v_ma80,
+                          self.buoy_v_ma70, self.buoy_v_ma40, buoy_q,
+                          self.coil_x_real, self.usher_sampling,
+                          self.num_buoys)
 
     def calculate_reward(self, episode_id):
         self.simulation_sampling.prepare_neighbor_and_boundary(

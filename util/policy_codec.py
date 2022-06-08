@@ -4,7 +4,7 @@ from .quaternion import get_quat3, rotate_using_quaternion
 
 
 def get_state_dim():
-    return 23
+    return 35
 
 
 def get_action_dim():
@@ -22,8 +22,9 @@ def get_coil_x_from_com(dp, unit, buoy_spec, buoy_x_real, buoy_q, num_buoys):
 
 
 # using real unit except density: which is relative to density0
-def make_state(dp, unit, kinematic_viscosity_real, buoy_v_real, buoy_q,
-               coil_x_real, usher_sampling, num_buoys):
+def make_state(dp, unit, kinematic_viscosity_real, buoy_v_real, buoy_v_ma95,
+               buoy_v_ma80, buoy_v_ma70, buoy_v_ma40, buoy_q, coil_x_real,
+               usher_sampling, num_buoys):
     state_aggregated = np.zeros([num_buoys, get_state_dim()], dp.default_dtype)
     buoy_q3 = get_quat3(buoy_q)
 
@@ -48,6 +49,10 @@ def make_state(dp, unit, kinematic_viscosity_real, buoy_v_real, buoy_q,
         state_aggregated[buoy_id] = np.concatenate(
             (
                 buoy_v_real[buoy_id],
+                buoy_v_ma95[buoy_id],
+                buoy_v_ma80[buoy_id],
+                buoy_v_ma70[buoy_id],
+                buoy_v_ma40[buoy_id],
                 buoy_q3[buoy_id],
                 xij[dist_sort_index[0]],
                 vi - buoy_v_real[dist_sort_index[0]],
