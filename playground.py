@@ -27,10 +27,11 @@ args = parser.parse_args()
 
 class Environment:
 
-    def __init__(self, truth_dirs, display):
-        self.dp = al.Depot(np.float32)
+    def __init__(self, dp, truth_dirs, display):
+        self.dp = dp
         self.cn = self.dp.cn
         cni = self.dp.cni
+        self.display = display
         if display:
             self.dp.create_display(800, 600, "", False)
         self.display_proxy = self.dp.get_display_proxy() if display else None
@@ -304,12 +305,12 @@ class Environment:
         reward = self.calculate_reward(self.episode_t + 1)
         grid_anomaly = self.dp.coat(self.solver.grid_anomaly).get()[0]
 
-        if self.dp.has_display():
+        if self.display:
             self.solver.normalize(self.solver.particle_v,
                                   self.particle_normalized_attr, 0,
                                   self.unit.from_real_velocity(0.02))
         self.dp.unmap_graphical_pointers()
-        if self.dp.has_display():
+        if self.display:
             self.display_proxy.draw()
         self.episode_t += 1
         done = False
@@ -358,15 +359,16 @@ train_dirs = [
 #     f"{args.truth_dir}/rltruth-09b70888-0606.19.35.41/",
 #     f"{args.truth_dir}/rltruth-5f6f0042-0606.19.57.18/"
 # ]
-env = Environment(truth_dirs=train_dirs, display=args.display)
+dp = al.Depot(np.float32)
+env = Environment(dp, truth_dirs=train_dirs, display=args.display)
 env.seed(args.seed)
 
 max_xoffset = 0.05
 max_voffset = 0.04
 max_focal_dist = 0.20
-min_usher_kernel_radius = 0.02
-max_usher_kernel_radius = 0.06
-max_strength = 720
+min_usher_kernel_radius = 0.01
+max_usher_kernel_radius = 0.08
+max_strength = 1000
 
 agent = TD3(actor_lr=3e-4,
             critic_lr=3e-4,
@@ -414,6 +416,33 @@ config.critic_final_scale = agent.critic_final_scale
 config.learn_after = agent.learn_after
 config.seed = args.seed
 
+
+def eval_agent(dp, agent):
+    val_dirs = [
+        f"{args.truth_dir}/rltruth-be268318-0526.07.32.30/",
+        f"{args.truth_dir}/rltruth-5caefe43-0526.14.46.12/",
+        f"{args.truth_dir}/rltruth-e8edf09d-0526.18.34.19/",
+        f"{args.truth_dir}/rltruth-6de1d91b-0526.09.31.47/",
+        f"{args.truth_dir}/rltruth-3b860b54-0526.23.12.15/",
+        f"{args.truth_dir}/rltruth-eb3494c1-0527.00.32.34/",
+        f"{args.truth_dir}/rltruth-e9ba71d8-0527.01.52.31/"
+    ]
+    eval_env = Environment(dp, truth_dirs=val_dirs, display=False)
+
+    avg_reward = 0.
+    for _ in range(len(val_dirs)):
+        state, done = eval_env.reset(), False
+        while not done:
+            action = agent.get_action(state, enable_noise=False)
+            state, reward, done, info = eval_env.step(
+                agent.actor.from_normalized_action(action))
+            avg_reward += reward
+
+    avg_reward /= len(val_dirs)
+
+    return avg_reward
+
+
 wandb.watch(agent.critic)
 
 score_history = deque(maxlen=100)
@@ -450,7 +479,6 @@ for t in range(max_timesteps):
         log_object = {'score': episode_reward}
         if len(score_history) == score_history.maxlen:
             log_object['score100'] = np.mean(list(score_history))
-        wandb.log(log_object)
 
         episode_id += 1
         episode_t = 0
@@ -459,6 +487,9 @@ for t in range(max_timesteps):
         done = False
 
         if episode_id % 50 == 0:
+            log_object['val_score'] = eval_agent(dp, agent)
             save_dir = f"artifacts/{wandb.run.id}/models/{episode_id}"
             Path(save_dir).mkdir(parents=True, exist_ok=True)
             agent.save_models(save_dir)
+
+        wandb.log(log_object)
