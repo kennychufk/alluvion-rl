@@ -67,6 +67,12 @@ class FluidSamplePellets:
             self.sample_data1, self.num_samples)
         return self.sample_data1
 
+    def sample_fluid_density(self, runner):
+        runner.launch_sample_fluid_density(self.sample_neighbors,
+                                           self.sample_num_neighbors,
+                                           self.sample_data1, self.num_samples)
+        return self.sample_data1
+
     def sample_velocity(self, runner, solver):
         runner.launch_sample_velocity_with_pellets(
             self.sample_x, solver.particle_x, solver.particle_density,

@@ -59,10 +59,6 @@ config.max_timesteps = max_timesteps
 wandb.watch(agent.critic)
 
 score_history = deque(maxlen=100)
-with open('switch', 'w') as f:
-    f.write('1')
-t = 0
-
 episode_id = 0
 episode_t = 0
 episode_reward = 0
@@ -87,10 +83,10 @@ for t in range(max_timesteps):
 
     if done:
         score_history.append(episode_reward)
-        wandb.log({
-            'score': episode_reward,
-            'score100': np.mean(list(score_history))
-        })
+        log_object = {'score': episode_reward}
+        if len(score_history) == score_history.maxlen:
+            log_object['score100'] = np.mean(list(score_history))
+        wandb.log(log_object)
 
         episode_id += 1
         episode_t = 0
@@ -98,5 +94,5 @@ for t in range(max_timesteps):
         state = env.reset()
         done = False
 
-    if (t + 1) % 50 == 0:
-        agent.save_models(wandb.run.dir)
+        if episode_id % 50 == 0:
+            agent.save_models(wandb.run.dir)
