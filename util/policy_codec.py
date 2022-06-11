@@ -1,6 +1,6 @@
 import numpy as np
 from numpy import linalg as LA
-from .quaternion import get_quat3, rotate_using_quaternion
+from .quaternion import get_quat3, rotate_using_quaternion, get_quat4
 
 
 def get_state_dim():
@@ -85,13 +85,19 @@ def set_usher_param(usher, dp, unit, buoy_v_real, coil_x_real,
     # [20] strength
     strength = action_aggregated[:, 7]
 
+    # direction_quat3 = action_aggregated[:, 8:11]
+    # direction_mag = action_aggregated[:, 11]
+    # direction = rotate_using_quaternion(
+    #     np.array([0, 1, 0], dtype=direction_quat3.dtype),
+    #     get_quat4(direction_quat3)) * np.repeat(direction_mag, 3).reshape(
+    #         -1, 3)
+
     focal_x_real = coil_x_real + xoffset_real
     focal_v_real = buoy_v_real + voffset_real
 
     dp.coat(usher.focal_x).set(unit.from_real_length(focal_x_real))
     dp.coat(usher.focal_v).set(unit.from_real_velocity(focal_v_real))
-
-    # dp.coat(usher.focal_dist).set(unit.from_real_length(focal_dist))
+    # dp.coat(usher.direction).set(direction)
     usher.direction.set_zero()
 
     dp.coat(usher.usher_kernel_radius).set(

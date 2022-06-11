@@ -14,6 +14,16 @@ def get_quat3(q):
     return q3 / np.repeat(LA.norm(q3, axis=-1), 3).reshape(-1, 3)
 
 
+def get_quat4(q3):
+    q3x = q3[..., 0]
+    q3z = q3[..., 1]
+    q3w = q3[..., 2]
+
+    qy = np.zeros_like(q3x)
+    q = np.stack((q3x, qy, q3z, q3w), axis=-1)
+    return q / np.repeat(LA.norm(q, axis=-1), 4).reshape(-1, 4)
+
+
 def rotate_using_quaternion(v, q):
     qx = q[..., 0]
     qy = q[..., 1]

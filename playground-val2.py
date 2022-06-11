@@ -9,19 +9,18 @@ import alluvion as al
 import numpy as np
 from pathlib import Path
 from sklearn.metrics import mean_squared_error
-import wandb
 import torch
 import time
 
 from rl import TD3, OrnsteinUhlenbeckProcess, GaussianNoise
-from util import Unit, FluidSamplePellets, parameterize_kinematic_viscosity_with_pellets, get_state_dim, get_action_dim, make_state, set_usher_param, get_coil_x_from_com, BuoySpec, read_pile
+from util import Unit, FluidSamplePellets, parameterize_kinematic_viscosity_with_pellets, get_state_dim, get_action_dim, make_state, set_usher_param, get_coil_x_from_com, BuoySpec, read_pile, get_timestamp_and_hash
 
 parser = argparse.ArgumentParser(description='RL playground')
 parser.add_argument('--seed', type=int, default=2021)
 parser.add_argument('--cache-dir', type=str, default='.')
 parser.add_argument('--truth-dir', type=str, required=True)
 parser.add_argument('--display', metavar='d', type=bool, default=False)
-parser.add_argument('--block-scan', metavar='s', type=bool, default=False)
+parser.add_argument('--model-dir', type=str, required=True)
 args = parser.parse_args()
 
 
@@ -243,12 +242,12 @@ class Environment:
             f'{self.truth_dir}/{episode_t}.pile')
         buoy_x_real = truth_pile_x[1:1 + self.num_buoys]
         self.buoy_v_real = truth_pile_v[1:1 + self.num_buoys]
-        self.buoy_v_ma95 = 0.0625 * self.buoy_v_real + (
-            1 - 0.0625) * self.buoy_v_ma95
-        self.buoy_v_ma80 = 0.125 * self.buoy_v_real + (
-            1 - 0.125) * self.buoy_v_ma80
-        self.buoy_v_ma70 = 0.25 * self.buoy_v_real + (1 -
-                                                      0.25) * self.buoy_v_ma70
+        self.buoy_v_ma95 = 0.95 * self.buoy_v_real + (1 -
+                                                      0.95) * self.buoy_v_ma95
+        self.buoy_v_ma80 = 0.80 * self.buoy_v_real + (1 -
+                                                      0.80) * self.buoy_v_ma80
+        self.buoy_v_ma70 = 0.70 * self.buoy_v_real + (1 -
+                                                      0.70) * self.buoy_v_ma70
         self.buoy_v_ma40 = 0.40 * self.buoy_v_real + (1 -
                                                       0.40) * self.buoy_v_ma40
         buoy_q = truth_pile_q[1:1 + self.num_buoys]
@@ -325,46 +324,7 @@ class Environment:
             done = True
         return new_state_aggregated, reward, done, result_obj
 
-
-train_dirs = [
-    f"{args.truth_dir}/rltruth-be268318-0526.07.32.30/",
-    f"{args.truth_dir}/rltruth-5caefe43-0526.14.46.12/",
-    f"{args.truth_dir}/rltruth-e8edf09d-0526.18.34.19/",
-    f"{args.truth_dir}/rltruth-6de1d91b-0526.09.31.47/",
-    f"{args.truth_dir}/rltruth-3b860b54-0526.23.12.15/",
-    f"{args.truth_dir}/rltruth-eb3494c1-0527.00.32.34/",
-    f"{args.truth_dir}/rltruth-e9ba71d8-0527.01.52.31/"
-]
-
-# # 100 markers
-# train_dirs = [
-#     f"{args.truth_dir}/rltruth-70eb294d-0528.12.35.00/",
-#     f"{args.truth_dir}/rltruth-9b57dabc-0528.17.09.24/",
-#     f"{args.truth_dir}/rltruth-1b06a408-0528.18.46.50/",
-#     f"{args.truth_dir}/rltruth-ffc2674d-0528.20.27.56/",
-#     f"{args.truth_dir}/rltruth-f218e02c-0528.22.05.13/",
-#     f"{args.truth_dir}/rltruth-a4f6c703-0528.23.50.15/",
-#     f"{args.truth_dir}/rltruth-63caecfb-0529.01.28.09/"
-# ]
-#
-# # shape reward
-# train_dirs = [
-#     f"{args.truth_dir}/rltruth-287fff2f-0606.02.28.24/",
-#     f"{args.truth_dir}/rltruth-749f1ce5-0606.04.12.08/",
-#     f"{args.truth_dir}/rltruth-e54c4fb9-0606.05.55.43/",
-#     f"{args.truth_dir}/rltruth-433ce26e-0606.07.41.42/"
-# ]
-#
-# # density reward
-# train_dirs = [
-#     f"{args.truth_dir}/rltruth-365f1a1d-0606.18.57.29/",
-#     f"{args.truth_dir}/rltruth-578d33eb-0606.19.16.45/",
-#     f"{args.truth_dir}/rltruth-09b70888-0606.19.35.41/",
-#     f"{args.truth_dir}/rltruth-5f6f0042-0606.19.57.18/"
-# ]
 dp = al.Depot(np.float32)
-env = Environment(dp, truth_dirs=train_dirs, display=args.display)
-env.seed(args.seed)
 
 max_xoffset = 0.05
 max_voffset = 0.04
@@ -382,12 +342,13 @@ agent = TD3(actor_lr=3e-4,
             gamma=0.95,
             min_action=np.array([
                 -max_xoffset, -max_xoffset, -max_xoffset, -max_voffset,
-                -max_voffset, -max_voffset, min_usher_kernel_radius, 0
+                -max_voffset, -max_voffset, min_usher_kernel_radius, 0, -1, -1,
+                -1
             ]),
             max_action=np.array([
                 +max_xoffset, +max_xoffset, +max_xoffset, +max_voffset,
                 +max_voffset, +max_voffset, max_usher_kernel_radius,
-                max_strength
+                max_strength, 1, 1, 1
             ]),
             learn_after=10000,
             replay_size=36000000,
@@ -396,31 +357,8 @@ agent = TD3(actor_lr=3e-4,
             critic_final_scale=1,
             soft_update_rate=0.005,
             batch_size=256)
-max_timesteps = 10000000
-if args.block_scan:
-    max_timesteps = 1000
 
-wandb.init(project='alluvion-rl')
-config = wandb.config
-config.actor_lr = agent.actor_lr
-config.critic_lr = agent.critic_lr
-config.critic_weight_decay = agent.critic_weight_decay
-config.state_dim = agent.state_dim
-config.action_dim = agent.action_dim
-config.hidden_sizes = agent.hidden_sizes
-config.max_action = agent.target_actor.max_action
-config.soft_update_rate = agent.soft_update_rate
-config.gamma = agent.gamma
-config.replay_size = agent.replay_size
-config.actor_final_scale = agent.actor_final_scale
-config.critic_final_scale = agent.critic_final_scale
-# config.sigma = agent.expl_noise_func.sigma
-# config.theta = agent.expl_noise_func.theta
-config.learn_after = agent.learn_after
-config.seed = args.seed
-
-
-def eval_agent(dp, agent):
+def eval_agent(dp, agent, report_state_action=False):
     val_dirs = [
         f"{args.truth_dir}/rltruth-be268318-0526.07.32.30/",
         f"{args.truth_dir}/rltruth-5caefe43-0526.14.46.12/",
@@ -431,77 +369,35 @@ def eval_agent(dp, agent):
         f"{args.truth_dir}/rltruth-e9ba71d8-0527.01.52.31/"
     ]
     eval_env = Environment(dp, truth_dirs=val_dirs, display=False)
+    timestamp_str, timestamp_hash = get_timestamp_and_hash()
 
     avg_reward = 0.
     for _ in range(len(val_dirs)):
         state, done = eval_env.reset(), False
+        if (report_state_action):
+            state_history = np.zeros((eval_env._max_episode_steps, eval_env.num_buoys, get_state_dim()))
+            action_history = np.zeros((eval_env._max_episode_steps, eval_env.num_buoys, get_action_dim()))
+            cursor = 0
         while not done:
             action = agent.get_action(state, enable_noise=False)
             real_action = agent.actor.from_normalized_action(action)
+            if (report_state_action):
+                state_history[cursor] = state
+                action_history[cursor] = real_action
+                cursor+=1
             state, reward, done, info = eval_env.step(real_action)
             avg_reward += reward
+        if (report_state_action):
+            report_save_dir = Path(f'val-{Path(eval_env.truth_dir).name}-{timestamp_hash}')
+            report_save_dir.mkdir(parents=True)
+            np.save(f'{str(report_save_dir)}/state.npy', state_history)
+            np.save(f'{str(report_save_dir)}/action.npy', action_history)
 
     avg_reward /= len(val_dirs)
+
 
     return avg_reward
 
 
-wandb.watch(agent.critic)
-
-score_history = deque(maxlen=100)
-episode_id = 0
-episode_t = 0
-episode_reward = 0
-episode_info = {}
-state_aggregated = env.reset()
-done = False
-
-for t in range(max_timesteps):
-    episode_t += 1
-    if t < agent.learn_after:
-        action_aggregated = np.zeros((env.num_buoys, agent.action_dim))
-        for buoy_id in range(env.num_buoys):
-            action_aggregated[buoy_id] = agent.uniform_random_action()
-    else:
-        action_aggregated = agent.get_action(state_aggregated)
-    new_state_aggregated, reward, done, info = env.step(
-        agent.actor.from_normalized_action(action_aggregated))
-    # done_int = int(done) if episode_t < env._max_episode_steps else 0
-    done_int = int(done)
-
-    for buoy_id in range(env.num_buoys):
-        agent.remember(state_aggregated[buoy_id], action_aggregated[buoy_id],
-                       reward, new_state_aggregated[buoy_id], done_int)
-    episode_reward += reward
-    state_aggregated = new_state_aggregated
-    for key in info:
-        if key not in episode_info:
-            episode_info[key] = 0
-        episode_info[key] += info[key]
-
-    if t >= agent.learn_after:  # as memory size is env.num_buoys * episode_t
-        agent.learn()
-
-    if done:
-        score_history.append(episode_reward)
-        log_object = {'score': episode_reward}
-        if len(score_history) == score_history.maxlen:
-            log_object['score100'] = np.mean(list(score_history))
-
-        for key in episode_info:
-            log_object[key] = episode_info[key]
-
-        episode_id += 1
-        episode_t = 0
-        episode_reward = 0
-        episode_info = {}
-        state_aggregated = env.reset()
-        done = False
-
-        if episode_id % 50 == 0:
-            log_object['val_score'] = eval_agent(dp, agent)
-            save_dir = f"artifacts/{wandb.run.id}/models/{episode_id}"
-            Path(save_dir).mkdir(parents=True, exist_ok=True)
-            agent.save_models(save_dir)
-
-        wandb.log(log_object)
+agent.load_models(args.model_dir)
+eval_agent(dp, agent, report_state_action=True)
