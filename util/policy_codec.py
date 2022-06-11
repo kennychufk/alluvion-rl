@@ -74,10 +74,10 @@ def set_usher_param(usher, dp, unit, buoy_v_real, coil_x_real,
                     action_aggregated, num_buoys):
     # [0:3] [3:6] [6:9] displacement from buoy x
     # xoffset_real = action_aggregated[:, 0:9].reshape(num_buoys, 3, 3)
-    xoffset_real = action_aggregated[:, 0:3].reshape(num_buoys, 1, 3)
+    xoffset_real = action_aggregated[:, 0:3]
     # [9:12] [12:15] [15:18] velocity offset from buoy v
     # voffset_real = action_aggregated[:, 9:18].reshape(num_buoys, 3, 3)
-    voffset_real = action_aggregated[:, 3:6].reshape(num_buoys, 1, 3)
+    voffset_real = action_aggregated[:, 3:6]
     # [18] focal dist
     # focal_dist = action_aggregated[:, 18]
     # [19] usher kernel radius
@@ -85,13 +85,14 @@ def set_usher_param(usher, dp, unit, buoy_v_real, coil_x_real,
     # [20] strength
     strength = action_aggregated[:, 7]
 
-    focal_x_real = np.tile(coil_x_real, 1).reshape(-1, 1, 3) + xoffset_real
-    focal_v_real = np.tile(buoy_v_real, 1).reshape(-1, 1, 3) + voffset_real
+    focal_x_real = coil_x_real + xoffset_real
+    focal_v_real = buoy_v_real + voffset_real
 
     dp.coat(usher.focal_x).set(unit.from_real_length(focal_x_real))
     dp.coat(usher.focal_v).set(unit.from_real_velocity(focal_v_real))
 
     # dp.coat(usher.focal_dist).set(unit.from_real_length(focal_dist))
+    usher.direction.set_zero()
 
     dp.coat(usher.usher_kernel_radius).set(
         unit.from_real_length(usher_kernel_radius))

@@ -282,7 +282,10 @@ class Environment:
         reconstruction_error = self.runner.calculate_mse_masked(
             simulation_v_real, self.ground_truth_v, self.mask,
             self.simulation_sampling.num_samples)
-        return -reconstruction_error
+        result_obj = {}
+        result_obj['v_error'] = reconstruction_error
+
+        return -reconstruction_error, result_obj
 
     def step(self, action_aggregated_converted):
         if np.sum(np.isnan(action_aggregated)) > 0:
@@ -302,7 +305,7 @@ class Environment:
         new_state_aggregated = self.collect_state(self.episode_t + 1)
 
         # find reward
-        reward = self.calculate_reward(self.episode_t + 1)
+        reward, result_obj = self.calculate_reward(self.episode_t + 1)
         grid_anomaly = self.dp.coat(self.solver.grid_anomaly).get()[0]
 
         if self.display:
@@ -320,7 +323,7 @@ class Environment:
             done = True
         if self.episode_t == self._max_episode_steps - 1:
             done = True
-        return new_state_aggregated, reward, done, {}
+        return new_state_aggregated, reward, done, result_obj
 
 
 train_dirs = [
@@ -449,6 +452,7 @@ score_history = deque(maxlen=100)
 episode_id = 0
 episode_t = 0
 episode_reward = 0
+episode_info = {}
 state_aggregated = env.reset()
 done = False
 
@@ -470,6 +474,10 @@ for t in range(max_timesteps):
                        reward, new_state_aggregated[buoy_id], done_int)
     episode_reward += reward
     state_aggregated = new_state_aggregated
+    for key in info:
+        if key not in episode_info:
+            episode_info[key] = 0
+        episode_info[key] += info[key]
 
     if t >= agent.learn_after:  # as memory size is env.num_buoys * episode_t
         agent.learn()
@@ -480,9 +488,13 @@ for t in range(max_timesteps):
         if len(score_history) == score_history.maxlen:
             log_object['score100'] = np.mean(list(score_history))
 
+        for key in episode_info:
+            log_object[key] = episode_info[key]
+
         episode_id += 1
         episode_t = 0
         episode_reward = 0
+        episode_info = {}
         state_aggregated = env.reset()
         done = False
 
