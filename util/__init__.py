@@ -9,3 +9,5 @@ from .matplotlib_latex import populate_plt_settings, get_column_width, get_text_
 from .policy_codec import get_state_dim, get_action_dim, make_state, set_usher_param, get_coil_x_from_com
 from .rigid_interpolator import *
 from .io import *
+from .environment import *
+from .rl_eval import *

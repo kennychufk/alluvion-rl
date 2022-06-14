@@ -7,6 +7,7 @@ from scipy.spatial.transform import Rotation as R
 
 # TODO: rename? only used for robot-controlled object
 class RigidInterpolator:
+
     def __init__(self, dp, unit, trace_filename):
         self.dp = dp
         self.unit = unit
@@ -48,6 +49,7 @@ class RigidInterpolator:
 
 # use real units
 class BuoyInterpolator:
+
     def __init__(self, dp, sample_interval, trajectory):
         self.dp = dp
         times = np.arange(len(trajectory)) * sample_interval
@@ -55,13 +57,10 @@ class BuoyInterpolator:
         self.slerp = Slerp(times, R.from_quat(trajectory['q']))
 
     def get_x(self, t):
-        x = self.cubic_spline(t)
-        return self.dp.f3(*x)
+        return self.cubic_spline(t)
 
     def get_v(self, t):
-        v = self.cubic_spline(t, 1)
-        return self.dp.f3(*v)
+        return self.cubic_spline(t, 1)
 
     def get_q(self, t):
-        q = self.slerp(t)
-        return self.dp.f4(*q.as_quat())
+        return self.slerp(t).as_quat()
