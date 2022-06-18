@@ -140,6 +140,7 @@ class Environment:
         cni.max_num_neighbors_per_particle = 64
 
         self._max_episode_steps = 1000
+        self._reward_delay = 50
         self.solver = self.dp.SolverI(self.runner,
                                       self.pile,
                                       self.dp,
@@ -294,14 +295,22 @@ class Environment:
                           self.num_buoys)
 
     def calculate_reward(self, episode_t):
+        if episode_t - self._reward_delay < 0:
+            result_obj = {}
+            result_obj['v_error'] = 0
+            result_obj['truth_sqr'] = 0
+            result_obj['num_masked'] = 0
+            return 0, result_obj
         self.simulation_sampling.prepare_neighbor_and_boundary(
             self.runner, self.solver)
         simulation_v_real = self.simulation_sampling.sample_velocity(
             self.runner, self.solver)
         simulation_v_real.scale(self.unit.to_real_velocity(1))
 
-        self.ground_truth_v.read_file(f'{self.truth_dir}/v-{episode_t}.alu')
-        self.mask.read_file(f'{self.truth_dir}/mask-{episode_t}.alu')
+        self.ground_truth_v.read_file(
+            f'{self.truth_dir}/v-{episode_t-self._reward_delay}.alu')
+        self.mask.read_file(
+            f'{self.truth_dir}/mask-{episode_t-self._reward_delay}.alu')
         v_error = self.runner.calculate_se_masked(
             simulation_v_real, self.ground_truth_v, self.mask,
             self.simulation_sampling.num_samples)
@@ -439,14 +448,21 @@ class EnvironmentPIV(Environment):
         return buoys_x, buoys_v, buoys_q
 
     def calculate_reward(self, episode_t):
+        if episode_t - self._reward_delay < 0:
+            result_obj = {}
+            result_obj['v_error'] = 0
+            result_obj['truth_sqr'] = 0
+            result_obj['num_masked'] = 0
+            return 0, result_obj
         self.simulation_sampling.prepare_neighbor_and_boundary(
             self.runner, self.solver)
         simulation_v_real = self.simulation_sampling.sample_velocity(
             self.runner, self.solver)
         simulation_v_real.scale(self.unit.to_real_velocity(1))
 
-        self.ground_truth_v.set(self.truth_v_collection[episode_t])
-        self.mask.set(self.mask_collection[episode_t])
+        self.ground_truth_v.set(self.truth_v_collection[episode_t -
+                                                        self._reward_delay])
+        self.mask.set(self.mask_collection[episode_t - self._reward_delay])
         v_error = self.runner.calculate_se_yz_masked(
             simulation_v_real, self.ground_truth_v, self.mask,
             self.simulation_sampling.num_samples)
@@ -456,6 +472,7 @@ class EnvironmentPIV(Environment):
         result_obj = {}
         result_obj['v_error'] = v_error
         result_obj['truth_sqr'] = truth_sqr
-        result_obj['num_masked'] = np.sum(self.mask_collection[episode_t])
+        result_obj['num_masked'] = np.sum(
+            self.mask_collection[episode_t - self._reward_delay])
 
         return -v_error, result_obj
