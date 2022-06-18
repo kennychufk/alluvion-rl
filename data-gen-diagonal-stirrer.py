@@ -10,7 +10,7 @@ from PIL import Image
 
 import alluvion as al
 
-from util import Unit, FluidSamplePellets, get_timestamp_and_hash, BuoySpec, parameterize_kinematic_viscosity, RigidInterpolator
+from util import Unit, FluidSamplePellets, get_timestamp_and_hash, BuoySpec, parameterize_kinematic_viscosity_with_pellets, RigidInterpolator
 
 parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--output-dir', type=str, default='.')
@@ -49,8 +49,7 @@ cn.boundary_epsilon = 1e-9
 cn.gravity = gravity
 kinematic_viscosity_real = 21.9e-3 / density0_real  # TODO: discrete, either water or GWM
 cn.viscosity, cn.boundary_viscosity = unit.from_real_kinematic_viscosity(
-    parameterize_kinematic_viscosity(kinematic_viscosity_real)
-)  # TODO: should change to parameterize_kinematic_viscosity_with_pellets!!!
+    parameterize_kinematic_viscosity_with_pellets(kinematic_viscosity_real))
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
@@ -323,7 +322,7 @@ next_visual_frame_id = 0
 visual_x_scaled = dp.create_coated_like(solver.particle_x)
 visual_v2_scaled = dp.create_coated_like(solver.particle_cfl_v2)
 
-target_t = unit.from_real_time(20.0)
+target_t = unit.from_real_time(10.0)
 last_tranquillized = 0.0
 rest_state_achieved = False
 
