@@ -10,6 +10,7 @@ from .replay_buffer import ReplayBuffer
 
 
 class MLPTwinCritic(nn.Module):
+
     def __init__(self, state_dim, action_dim, hidden_sizes, final_layer_scale):
         super(MLPTwinCritic, self).__init__()
         net0_elements = []
@@ -19,7 +20,9 @@ class MLPTwinCritic(nn.Module):
             net0_elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             net1_elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 2:
+                # net0_elements.append(nn.LayerNorm(layer_sizes[i + 1]))
                 net0_elements.append(nn.ReLU())
+                # net1_elements.append(nn.LayerNorm(layer_sizes[i + 1]))
                 net1_elements.append(nn.ReLU())
         self.net0 = nn.Sequential(*net0_elements)
         self.net1 = nn.Sequential(*net1_elements)
@@ -46,6 +49,7 @@ class MLPTwinCritic(nn.Module):
 
 
 class MLPActor(nn.Module):
+
     def __init__(self, state_dim, action_dim, hidden_sizes, min_action,
                  max_action, final_layer_scale):
         super(MLPActor, self).__init__()
@@ -59,6 +63,7 @@ class MLPActor(nn.Module):
         for i in range(len(layer_sizes) - 1):
             elements.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 2:
+                # elements.append(nn.LayerNorm(layer_sizes[i + 1]))
                 elements.append(nn.ReLU())
             else:
                 elements.append(nn.Tanh())
@@ -78,6 +83,7 @@ class MLPActor(nn.Module):
 
 
 class TD3:
+
     def __init__(self,
                  actor_lr,
                  critic_lr,

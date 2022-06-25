@@ -7,7 +7,8 @@ import torch
 
 from .unit import Unit
 from .fluid_sample_pellets import FluidSamplePellets
-from .parameterize_viscosity import parameterize_kinematic_viscosity_with_pellets
+from .fluid_sample import FluidSample
+from .parameterize_viscosity import parameterize_kinematic_viscosity_with_pellets, parameterize_kinematic_viscosity
 from .policy_codec import make_state, set_usher_param, get_coil_x_from_com
 from .buoy_spec import BuoySpec
 from .io import read_pile
@@ -42,12 +43,20 @@ class Environment:
         return max_num_beads
 
     def get_simulation_sampling(self, truth_dir):
-        simulation_sampling = FluidSamplePellets(self.dp,
-                                                 f'{truth_dir}/sample-x.alu')
+        simulation_sampling = FluidSamplePellets(
+            self.dp, f'{truth_dir}/sample-x.alu'
+        ) if self.volume_method == al.VolumeMethod.pellets else FluidSample(
+            self.dp, f'{truth_dir}/sample-x.alu')
         simulation_sampling.sample_x.scale(self.unit.from_real_length(1))
         return simulation_sampling
 
-    def __init__(self, dp, truth_dirs, cache_dir, ma_alphas, display):
+    def __init__(self,
+                 dp,
+                 truth_dirs,
+                 cache_dir,
+                 ma_alphas,
+                 display,
+                 volume_method=al.VolumeMethod.pellets):
         self.dp = dp
         self.cn = self.dp.cn
         cni = self.dp.cni
@@ -56,6 +65,7 @@ class Environment:
             self.dp.create_display(800, 600, "", False)
         self.display_proxy = self.dp.get_display_proxy() if display else None
         self.runner = self.dp.Runner()
+        self.volume_method = volume_method
 
         # === constants
         particle_radius = 0.25
@@ -95,7 +105,7 @@ class Environment:
         self.pile = self.dp.Pile(self.dp,
                                  self.runner,
                                  max_num_contacts=0,
-                                 volume_method=al.VolumeMethod.pellets,
+                                 volume_method=volume_method,
                                  max_num_pellets=container_num_pellets)
 
         ## ================== container
@@ -112,13 +122,21 @@ class Environment:
         print('container_res', container_res)
         container_pellet_x = self.dp.create((container_num_pellets), 3)
         container_pellet_x.read_file(container_pellet_filename)
-        self.pile.add_pellets(container_distance,
-                              container_res,
-                              pellets=container_pellet_x,
-                              sign=-1,
-                              mass=0,
-                              restitution=0.8,
-                              friction=0.3)
+        if self.volume_method == al.VolumeMethod.pellets:
+            self.pile.add_pellets(container_distance,
+                                  container_res,
+                                  pellets=container_pellet_x,
+                                  sign=-1,
+                                  mass=0,
+                                  restitution=0.8,
+                                  friction=0.3)
+        else:
+            self.pile.add(container_distance,
+                          container_res,
+                          sign=-1,
+                          mass=0,
+                          restitution=0.8,
+                          friction=0.3)
         self.dp.remove(container_pellet_x)
         ## ================== container
         self.buoy_spec = BuoySpec(self.dp, self.unit)
@@ -131,11 +149,11 @@ class Environment:
         cni.grid_res = al.uint3(int(math.ceil(container_aabb_range_per_h.x)),
                                 int(math.ceil(container_aabb_range_per_h.y)),
                                 int(math.ceil(
-                                    container_aabb_range_per_h.z))) + 4
+                                    container_aabb_range_per_h.z))) + 8
         cni.grid_offset = al.int3(
-            int(container_distance.aabb_min.x) - 2,
-            int(container_distance.aabb_min.y) - 2,
-            int(container_distance.aabb_min.z) - 2)
+            int(container_distance.aabb_min.x) - 4,
+            int(container_distance.aabb_min.y) - 4,
+            int(container_distance.aabb_min.z) - 4)
         cni.max_num_particles_per_cell = 64
         cni.max_num_neighbors_per_particle = 64
 
@@ -154,12 +172,17 @@ class Environment:
         self.solver.min_dt = 0
         self.solver.cfl = 0.2
         self.usher_sampling = FluidSamplePellets(
+            self.dp, np.zeros((max_num_buoys, 3), self.dp.default_dtype)
+        ) if self.volume_method == al.VolumeMethod.pellets else FluidSample(
             self.dp, np.zeros((max_num_buoys, 3), self.dp.default_dtype))
         self.dir_id = 0
         self.simulation_sampling = None
         self.ground_truth_v = None
         self.v_zero = None
         self.mask = None
+
+        self.truth_real_freq = 100.0
+        self.truth_real_interval = 1.0 / self.truth_real_freq
 
         if display:
             self.display_proxy.set_camera(
@@ -220,9 +243,14 @@ class Environment:
 
         self.cn.set_particle_attr(self.cn.particle_radius,
                                   self.cn.particle_mass, self.cn.density0)
-        self.cn.viscosity, self.cn.boundary_viscosity = self.unit.from_real_kinematic_viscosity(
-            parameterize_kinematic_viscosity_with_pellets(
-                self.kinematic_viscosity_real))
+        if self.volume_method == al.VolumeMethod.pellets:
+            self.cn.viscosity, self.cn.boundary_viscosity = self.unit.from_real_kinematic_viscosity(
+                parameterize_kinematic_viscosity_with_pellets(
+                    self.kinematic_viscosity_real))
+        else:
+            self.cn.viscosity, self.cn.boundary_viscosity = self.unit.from_real_kinematic_viscosity(
+                parameterize_kinematic_viscosity(
+                    self.kinematic_viscosity_real))
 
         fluid_mass = self.unit.from_real_mass(
             np.load(f'{self.truth_dir}/fluid_mass.npy').item())
@@ -329,15 +357,13 @@ class Environment:
         if np.sum(np.isnan(action_aggregated_converted)) > 0:
             print(action_aggregated_converted)
             sys.exit(0)
-        truth_real_freq = 100.0
-        truth_real_interval = 1.0 / truth_real_freq
 
         set_usher_param(self.solver.usher, self.dp, self.unit,
                         self.buoy_v_real, self.coil_x_real,
                         action_aggregated_converted, self.num_buoys)
         self.dp.map_graphical_pointers()
         target_t = self.unit.from_real_time(self.episode_t *
-                                            truth_real_interval)
+                                            self.truth_real_interval)
         while (self.solver.t < target_t):
             self.solver.step()
         new_state_aggregated = self.collect_state(self.episode_t + 1)
@@ -376,14 +402,18 @@ class EnvironmentPIV(Environment):
                  cache_dir,
                  ma_alphas,
                  display,
-                 buoy_filter_postfix='-f18'):
-        super().__init__(dp, truth_dirs, cache_dir, ma_alphas, display)
+                 buoy_filter_postfix='-f18',
+                 volume_method=al.VolumeMethod.pellets):
+        super().__init__(dp, truth_dirs, cache_dir, ma_alphas, display,
+                         volume_method)
         self.container_shift = dp.f3(0, self.container_width * 0.5, 0)
         self.pile.x[0] = self.container_shift
         cni = self.dp.cni
-        cni.grid_offset.y = -2
+        cni.grid_offset.y = -4
         self.dp.copy_cn()
         self.buoy_filter_postfix = buoy_filter_postfix
+        self.truth_real_freq = 500.0
+        self.truth_real_interval = 1.0 / self.truth_real_freq
 
     def get_simulation_sampling(self, truth_dir):
         sample_x_piv = np.load(f'{truth_dir}/mat_results/pos.npy').reshape(
@@ -393,8 +423,10 @@ class EnvironmentPIV(Environment):
         sample_x_np[:, 2] = sample_x_piv[:, 0]
         sample_x_np[:, 1] = sample_x_piv[:, 1]
 
-        return FluidSamplePellets(self.dp,
-                                  self.unit.from_real_length(sample_x_np))
+        return FluidSamplePellets(
+            self.dp, self.unit.from_real_length(sample_x_np)
+        ) if self.volume_method == al.VolumeMethod.pellets else FluidSample(
+            self.dp, self.unit.from_real_length(sample_x_np))
 
     def reset_vectors(self):
         super().reset_vectors()
@@ -403,11 +435,12 @@ class EnvironmentPIV(Environment):
                 -1, self.simulation_sampling.num_samples)
 
         truth_v_piv = np.load(
-            f'{self.truth_dir}/mat_results/vel_filtered.npy').reshape(
+            f'{self.truth_dir}/mat_results/vel_original.npy').reshape(
                 -1, self.simulation_sampling.num_samples, 2)
         self.truth_v_collection = np.zeros((*truth_v_piv.shape[:-1], 3))
         self.truth_v_collection[..., 2] = truth_v_piv[..., 0]
         self.truth_v_collection[..., 1] = truth_v_piv[..., 1]
+        self._max_episode_steps = len(truth_v_piv)
 
         used_buoy_ids = np.load(f'{self.truth_dir}/rec/marker_ids.npy')
         buoy_trajectories = [
@@ -430,7 +463,7 @@ class EnvironmentPIV(Environment):
         self.dp.unmap_graphical_pointers()
 
     def get_buoy_kinematics_real(self, episode_t):
-        t_real = episode_t * 0.01
+        t_real = episode_t * self.truth_real_interval
         buoy_x_shift = np.array(
             [0, -0.026, 0], self.dp.default_dtype
         )  # coil center to board surface: 21mm, tank thickness: 5mm

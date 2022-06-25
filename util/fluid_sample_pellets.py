@@ -1,4 +1,5 @@
 import numpy as np
+import alluvion as al
 
 
 class FluidSamplePellets:
@@ -7,6 +8,7 @@ class FluidSamplePellets:
         set_with_file = isinstance(x_src, str)
         self.num_samples = dp.get_alu_info(
             x_src)[0][0] if set_with_file else x_src.shape[0]
+        self.volume_method = al.VolumeMethod.pellets
 
         self.sample_x = dp.create_coated((self.num_samples), 3)
         self.sample_data3 = dp.create_coated((self.num_samples), 3)
@@ -20,6 +22,8 @@ class FluidSamplePellets:
             (self.num_samples, dp.cni.max_num_neighbors_per_particle), 4)
         self.sample_num_pellet_neighbors = dp.create_coated((self.num_samples),
                                                             1, np.uint32)
+        self.sample_boundary_kernel_combined = dp.create_coated(
+            (self.num_samples), 4)
         if set_with_file:
             self.sample_x.read_file(x_src)
         else:
@@ -35,6 +39,7 @@ class FluidSamplePellets:
         self.dp.remove(self.sample_num_neighbors)
         self.dp.remove(self.sample_pellet_neighbors)
         self.dp.remove(self.sample_num_pellet_neighbors)
+        self.dp.remove(self.sample_boundary_kernel_combined)
 
     def prepare_neighbor_and_boundary(self, runner, solver):
         solver.update_particle_neighbors()
@@ -43,6 +48,9 @@ class FluidSamplePellets:
             self.sample_neighbors, self.sample_num_neighbors,
             self.sample_pellet_neighbors, self.sample_num_pellet_neighbors,
             solver.grid_anomaly, solver.max_num_particles, self.num_samples)
+        runner.launch_compute_particle_boundary_with_pellets(
+            self.sample_boundary_kernel_combined, self.sample_pellet_neighbors,
+            self.sample_num_pellet_neighbors, self.num_samples)
 
     def prepare_neighbor_and_boundary_wrap1(self, runner, solver):
         solver.update_particle_neighbors_wrap1()
@@ -51,6 +59,9 @@ class FluidSamplePellets:
             self.sample_neighbors, self.sample_num_neighbors,
             self.sample_pellet_neighbors, self.sample_num_pellet_neighbors,
             solver.grid_anomaly, solver.max_num_particles, self.num_samples)
+        runner.launch_compute_particle_boundary_with_pellets(
+            self.sample_boundary_kernel_combined, self.sample_pellet_neighbors,
+            self.sample_num_pellet_neighbors, self.num_samples)
 
     def sample_vector3(self, runner, solver, fluid_var):
         runner.launch_sample_fluid(self.sample_x, solver.particle_x,
@@ -81,6 +92,15 @@ class FluidSamplePellets:
             self.sample_pellet_neighbors, self.sample_num_pellet_neighbors,
             self.num_samples)
         return self.sample_data3
+
+    def sample_vorticity(self, runner, solver):
+        runner.launch_sample_vorticity_with_pellets(
+            self.sample_x, solver.particle_x, solver.particle_density,
+            solver.particle_v, self.sample_neighbors,
+            self.sample_num_neighbors, self.sample_data3, self.sample_vort,
+            self.sample_pellet_neighbors, self.sample_num_pellet_neighbors,
+            self.num_samples)
+        return self.sample_vort
 
 
 class OptimSamplingPellets(FluidSamplePellets):

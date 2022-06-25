@@ -1,4 +1,5 @@
 import numpy as np
+import alluvion as al
 
 
 class FluidSample:
@@ -7,6 +8,7 @@ class FluidSample:
         set_with_file = isinstance(x_src, str)
         self.num_samples = dp.get_alu_info(
             x_src)[0][0] if set_with_file else x_src.shape[0]
+        self.volume_method = al.VolumeMethod.volume_map
 
         self.sample_x = dp.create_coated((self.num_samples), 3)
         self.sample_data3 = dp.create_coated((self.num_samples), 3)

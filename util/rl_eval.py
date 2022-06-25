@@ -11,10 +11,10 @@ def eval_agent(eval_env, agent, result_dict, report_state_action=False):
 
     all_episodes_error_accm = 0.
     all_episodes_mask_accm = 0
-    episode_reward = 0
-    episode_mask_accm = 0
     episode_error_accm = 0
     episode_truth_accm = 0
+    within_t_mean_error = 0
+    within_t_mean_truth = 0
     for _ in range(len(eval_env.truth_dirs)):
         state, done = eval_env.reset(), False
         if (report_state_action):
@@ -24,6 +24,9 @@ def eval_agent(eval_env, agent, result_dict, report_state_action=False):
             action_history = np.zeros(
                 (eval_env._max_episode_steps, eval_env.num_buoys,
                  get_action_dim()))
+            sim_v_history = np.zeros(
+                (eval_env._max_episode_steps,
+                 eval_env.simulation_sampling.num_samples, 3))
             cursor = 0
         dirname_short = Path(eval_env.truth_dir).name[4:15]
         while not done:
@@ -32,20 +35,22 @@ def eval_agent(eval_env, agent, result_dict, report_state_action=False):
             if (report_state_action):
                 state_history[cursor] = state
                 action_history[cursor] = real_action
+                sim_v_history[
+                    cursor] = eval_env.simulation_sampling.sample_data3.get()
                 cursor += 1
             state, reward, done, info = eval_env.step(real_action)
             all_episodes_error_accm += info['v_error']
-            episode_reward += info['v_error']
             episode_error_accm += info['v_error']
             episode_truth_accm += info['truth_sqr']
-            episode_mask_accm += info['num_masked']
             all_episodes_mask_accm += info['num_masked']
-        print(episode_reward)
-        result_dict[dirname_short] = episode_reward / episode_mask_accm
+            if info['num_masked'] > 0:
+                within_t_mean_error += info['v_error'] / info['num_masked']
+                within_t_mean_truth += info['truth_sqr'] / info['num_masked']
+
         result_dict[
-            f'{dirname_short}%'] = episode_error_accm / episode_truth_accm
-        episode_reward = 0
-        episode_mask_accm = 0
+            f'{eval_env.num_buoys}-{dirname_short}%'] = episode_error_accm / episode_truth_accm
+        result_dict[
+            f'{eval_env.num_buoys}-{dirname_short}m%'] = within_t_mean_error / within_t_mean_truth
         episode_error_accm = 0
         episode_truth_accm = 0
         if (report_state_action):
@@ -53,5 +58,8 @@ def eval_agent(eval_env, agent, result_dict, report_state_action=False):
             report_save_dir.mkdir(parents=True)
             np.save(f'{str(report_save_dir)}/state.npy', state_history)
             np.save(f'{str(report_save_dir)}/action.npy', action_history)
+            np.save(f'{str(report_save_dir)}/sim_v_real.npy', sim_v_history)
+            np.save(f'{str(report_save_dir)}/truth_v_real.npy',
+                    eval_env.truth_v_collection)
 
     return all_episodes_error_accm / all_episodes_mask_accm
