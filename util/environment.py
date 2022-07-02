@@ -44,11 +44,22 @@ class Environment:
 
     def get_simulation_sampling(self, truth_dir):
         simulation_sampling = FluidSamplePellets(
-            self.dp, f'{truth_dir}/sample-x.alu'
+            self.dp, f'{truth_dir}/sample-x.alu', self.cni
         ) if self.volume_method == al.VolumeMethod.pellets else FluidSample(
             self.dp, f'{truth_dir}/sample-x.alu')
         simulation_sampling.sample_x.scale(self.unit.from_real_length(1))
         return simulation_sampling
+
+    def init_real_kernel_radius(self):
+        self.real_kernel_radius = 2**-6
+
+    def init_particle_files(self):
+        self.initial_particle_x_filename = f'{self.cache_dir}/playground_bead_x-2to-6.alu'
+        self.initial_particle_v_filename = f'{self.cache_dir}/playground_bead_v-2to-6.alu'
+        self.initial_particle_pressure_filename = f'{self.cache_dir}/playground_bead_p-2to-6.alu'
+
+    def init_container_pellet_file(self):
+        self.container_pellet_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/cube24-2to-6.alu'
 
     def __init__(self,
                  dp,
@@ -58,16 +69,19 @@ class Environment:
                  display,
                  volume_method=al.VolumeMethod.pellets):
         self.dp = dp
-        self.cn = self.dp.cn
-        cni = self.dp.cni
+        self.cn, self.cni = self.dp.create_cn()
         self.display = display
         if display and not self.dp.has_display():
             self.dp.create_display(800, 600, "", False)
         self.display_proxy = self.dp.get_display_proxy() if display else None
         self.runner = self.dp.Runner()
         self.volume_method = volume_method
+        self.cache_dir = cache_dir
 
         # === constants
+        self.init_particle_files()
+        self.init_real_kernel_radius()
+        self.init_container_pellet_file()
         particle_radius = 0.25
         kernel_radius = 1.0
         density0 = 1.0
@@ -76,10 +90,8 @@ class Environment:
         particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
         gravity = self.dp.f3(0, -1, 0)
-
-        real_kernel_radius = 2**-6
         self.unit = Unit(
-            real_kernel_radius=real_kernel_radius,
+            real_kernel_radius=self.real_kernel_radius,
             real_density0=1,  # dummy
             real_gravity=-9.80665)
 
@@ -88,7 +100,6 @@ class Environment:
         self.cn.boundary_epsilon = 1e-9
         self.cn.gravity = gravity
         self.truth_dirs = truth_dirs
-        self.cache_dir = cache_dir
         self.ma_alphas = ma_alphas
         # === constants
 
@@ -97,16 +108,17 @@ class Environment:
         print('max_num_buoys', max_num_buoys)
         print('max_num_beads', max_num_beads)
 
-        container_pellet_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/cube24-2to-6.alu'
         container_num_pellets = self.dp.get_alu_info(
-            container_pellet_filename)[0][0]
+            self.container_pellet_filename)[0][0]
 
         # rigids
         self.pile = self.dp.Pile(self.dp,
                                  self.runner,
                                  max_num_contacts=0,
                                  volume_method=volume_method,
-                                 max_num_pellets=container_num_pellets)
+                                 max_num_pellets=container_num_pellets,
+                                 cn=self.cn,
+                                 cni=self.cni)
 
         ## ================== container
         self.container_width = self.unit.from_real_length(0.24)
@@ -121,7 +133,7 @@ class Environment:
                                  int(container_res_float.z))
         print('container_res', container_res)
         container_pellet_x = self.dp.create((container_num_pellets), 3)
-        container_pellet_x.read_file(container_pellet_filename)
+        container_pellet_x.read_file(self.container_pellet_filename)
         if self.volume_method == al.VolumeMethod.pellets:
             self.pile.add_pellets(container_distance,
                                   container_res,
@@ -146,19 +158,19 @@ class Environment:
         self.cn.contact_tolerance = particle_radius
 
         container_aabb_range_per_h = container_extent / kernel_radius
-        cni.grid_res = al.uint3(int(math.ceil(container_aabb_range_per_h.x)),
-                                int(math.ceil(container_aabb_range_per_h.y)),
-                                int(math.ceil(
-                                    container_aabb_range_per_h.z))) + 8
-        cni.grid_offset = al.int3(
+        self.cni.grid_res = al.uint3(
+            int(math.ceil(container_aabb_range_per_h.x)),
+            int(math.ceil(container_aabb_range_per_h.y)),
+            int(math.ceil(container_aabb_range_per_h.z))) + 8
+        self.cni.grid_offset = al.int3(
             int(container_distance.aabb_min.x) - 4,
             int(container_distance.aabb_min.y) - 4,
             int(container_distance.aabb_min.z) - 4)
-        cni.max_num_particles_per_cell = 64
-        cni.max_num_neighbors_per_particle = 64
+        self.cni.max_num_particles_per_cell = 64
+        self.cni.max_num_neighbors_per_particle = 64
 
         self._max_episode_steps = 1000
-        self._reward_delay = 50
+        self._reward_delay = 0
         self.solver = self.dp.SolverI(self.runner,
                                       self.pile,
                                       self.dp,
@@ -166,13 +178,16 @@ class Environment:
                                       num_ushers=max_num_buoys,
                                       enable_surface_tension=False,
                                       enable_vorticity=False,
+                                      cn=self.cn,
+                                      cni=self.cni,
                                       graphical=display)
         self.solver.max_dt = self.unit.from_real_time(0.0005)
         self.solver.initial_dt = self.solver.max_dt
         self.solver.min_dt = 0
         self.solver.cfl = 0.2
         self.usher_sampling = FluidSamplePellets(
-            self.dp, np.zeros((max_num_buoys, 3), self.dp.default_dtype)
+            self.dp, np.zeros(
+                (max_num_buoys, 3), self.dp.default_dtype), self.cni
         ) if self.volume_method == al.VolumeMethod.pellets else FluidSample(
             self.dp, np.zeros((max_num_buoys, 3), self.dp.default_dtype))
         self.dir_id = 0
@@ -262,14 +277,11 @@ class Environment:
         print('num_particles', num_particles, 'self.num_buoys', self.num_buoys)
 
     def reset_solver_initial(self):
-        initial_particle_x_filename = f'{self.cache_dir}/playground_bead_x-2to-6.alu'
-        initial_particle_v_filename = f'{self.cache_dir}/playground_bead_v-2to-6.alu'
-        initial_particle_pressure_filename = f'{self.cache_dir}/playground_bead_p-2to-6.alu'
         self.dp.map_graphical_pointers()
-        self.solver.particle_x.read_file(initial_particle_x_filename)
-        self.solver.particle_v.read_file(initial_particle_v_filename)
+        self.solver.particle_x.read_file(self.initial_particle_x_filename)
+        self.solver.particle_v.read_file(self.initial_particle_v_filename)
         self.solver.particle_pressure.read_file(
-            initial_particle_pressure_filename)
+            self.initial_particle_pressure_filename)
         self.dp.unmap_graphical_pointers()
 
         self.solver.reset_solving_var()
@@ -280,6 +292,7 @@ class Environment:
         self.reset_vectors()
         self.reset_solver_properties()
         self.reset_solver_initial()
+        self.dp.copy_cn_external(self.cn, self.cni)
 
         self.dp.map_graphical_pointers()
         state_aggregated = self.collect_state(0)
@@ -311,6 +324,7 @@ class Environment:
         coil_x_np = self.unit.from_real_length(self.coil_x_real)
         self.usher_sampling.sample_x.set(coil_x_np)
 
+        self.dp.copy_cn_external(self.cn, self.cni)
         self.usher_sampling.prepare_neighbor_and_boundary(
             self.runner, self.solver)
         self.usher_sampling.sample_density(self.runner)
@@ -393,6 +407,17 @@ class Environment:
 
 class EnvironmentPIV(Environment):
 
+    def init_real_kernel_radius(self):
+        self.real_kernel_radius = 0.011
+
+    def init_particle_files(self):
+        self.initial_particle_x_filename = f'{self.cache_dir}/playground_bead_x-0.011.alu'
+        self.initial_particle_v_filename = f'{self.cache_dir}/playground_bead_v-0.011.alu'
+        self.initial_particle_pressure_filename = f'{self.cache_dir}/playground_bead_p-0.011.alu'
+
+    def init_container_pellet_file(self):
+        self.container_pellet_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/cube24-0.011.alu'
+
     def get_num_buoys(self, truth_dir):
         return len(np.load(f'{truth_dir}/rec/marker_ids.npy'))
 
@@ -408,8 +433,7 @@ class EnvironmentPIV(Environment):
                          volume_method)
         self.container_shift = dp.f3(0, self.container_width * 0.5, 0)
         self.pile.x[0] = self.container_shift
-        cni = self.dp.cni
-        cni.grid_offset.y = -4
+        self.cni.grid_offset.y = -4
         self.dp.copy_cn()
         self.buoy_filter_postfix = buoy_filter_postfix
         self.truth_real_freq = 500.0
@@ -424,7 +448,7 @@ class EnvironmentPIV(Environment):
         sample_x_np[:, 1] = sample_x_piv[:, 1]
 
         return FluidSamplePellets(
-            self.dp, self.unit.from_real_length(sample_x_np)
+            self.dp, self.unit.from_real_length(sample_x_np), self.cni
         ) if self.volume_method == al.VolumeMethod.pellets else FluidSample(
             self.dp, self.unit.from_real_length(sample_x_np))
 

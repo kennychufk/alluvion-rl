@@ -1,5 +1,6 @@
 import numpy as np
 from numpy import linalg as LA
+import alluvion as al
 from .quaternion import get_quat3, rotate_using_quaternion, get_quat4
 
 
@@ -32,7 +33,8 @@ def make_state(dp, unit, kinematic_viscosity_real, buoy_v_real, buoy_v_ma0,
     sample_density_relative = usher_sampling.sample_data1.get()
     # sample_vort_real = unit.to_real_angular_velocity(
     #     usher_sampling.sample_vort.get())
-    # sample_container_kernel_sim = usher_sampling.sample_boundary_kernel.get(
+    # sample_container_kernel_sim = usher_sampling.sample_boundary_kernel_combined.get(
+    # ) if usher_sampling.volume_method == al.VolumeMethod.pellets else usher_sampling.sample_boundary_kernel.get(
     # )[0]
     # sample_container_kernel_vol_grad_real = unit.to_real_per_length(
     #     sample_container_kernel_sim[:, :3])

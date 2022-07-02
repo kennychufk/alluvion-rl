@@ -9,6 +9,7 @@ from scipy.spatial.transform import Rotation as R
 from PIL import Image
 
 import alluvion as al
+import alluvol
 
 from util import Unit, FluidSamplePellets, get_timestamp_and_hash, BuoySpec, parameterize_kinematic_viscosity_with_pellets, RigidInterpolator
 
@@ -222,7 +223,8 @@ num_samples = pile.compute_sort_fluid_block_internal_all(
     particle_radius=sample_radius,
     mode=sample_x_fill_mode)
 print('num_samples', num_samples)
-sampling = FluidSamplePellets(dp, np.zeros((num_samples, 3), dp.default_dtype))
+sampling = FluidSamplePellets(dp, np.zeros((num_samples, 3), dp.default_dtype),
+                              dp.cni)
 runner.launch_create_fluid_block_internal(sampling.sample_x,
                                           sample_internal_encoded,
                                           num_samples,
@@ -347,6 +349,22 @@ while not rest_state_achieved or solver.t < target_t:
                 sample_density.write_file(
                     f'{frame_directory}/density-{next_truth_frame_id}.alu',
                     sampling.num_samples)
+                # visual_v2_scaled.set_from(solver.particle_cfl_v2)
+                # visual_v2_scaled.scale(unit.to_real_velocity_mse(1))
+                # visual_v2_scaled.write_file(
+                #     f'{frame_directory}/v2-{next_truth_frame_id}.alu',
+                #     solver.num_particles)
+                # visual_x_scaled.set_from(solver.particle_x)
+                # visual_x_scaled.scale(unit.to_real_length(1))
+                # visual_x_scaled.write_file(
+                #     f'{frame_directory}/x-{next_truth_frame_id}.alu',
+                #     solver.num_particles)
+                # raster_radius = unit.rl * 0.36
+                # voxel_size = raster_radius / np.sqrt(3.0)
+                # ls = alluvol.create_liquid_level_set(
+                #     visual_x_scaled.get(solver.num_particles), raster_radius,
+                #     voxel_size)
+                # ls.write(f'{frame_directory}/x-{next_truth_frame_id}.vdb')
                 pile.write_file(
                     f'{frame_directory}/{next_truth_frame_id}.pile',
                     unit.to_real_length(1), unit.to_real_velocity(1),
@@ -399,7 +417,7 @@ while not rest_state_achieved or solver.t < target_t:
                 last_tranquillized = solver.t
             elif unit.to_real_time(solver.t - last_tranquillized
                                    ) > 0.4 and unit.to_real_velocity(
-                                       v_rms) < 0.030:
+                                       v_rms) < 0.015:
                 print("rest state achieved at", unit.to_real_time(solver.t))
                 solver.t = 0
                 rest_state_achieved = True

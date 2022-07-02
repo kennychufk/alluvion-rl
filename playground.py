@@ -14,7 +14,7 @@ import torch
 import time
 
 from rl import TD3, OrnsteinUhlenbeckProcess, GaussianNoise
-from util import Environment, get_state_dim, get_action_dim, eval_agent
+from util import Environment, EnvironmentPIV, get_state_dim, get_action_dim, eval_agent
 
 parser = argparse.ArgumentParser(description='RL playground')
 parser.add_argument('--seed', type=int, default=2021)
@@ -68,20 +68,6 @@ env = Environment(dp,
                   ma_alphas=ma_alphas,
                   display=args.display)
 env.seed(args.seed)
-val_dirs = [
-    f"{args.truth_dir}/rltruth-be268318-0526.07.32.30/",
-    f"{args.truth_dir}/rltruth-5caefe43-0526.14.46.12/",
-    f"{args.truth_dir}/rltruth-e8edf09d-0526.18.34.19/",
-    f"{args.truth_dir}/rltruth-6de1d91b-0526.09.31.47/",
-    f"{args.truth_dir}/rltruth-3b860b54-0526.23.12.15/",
-    f"{args.truth_dir}/rltruth-eb3494c1-0527.00.32.34/",
-    f"{args.truth_dir}/rltruth-e9ba71d8-0527.01.52.31/"
-]
-eval_env = Environment(dp,
-                       truth_dirs=val_dirs,
-                       cache_dir=args.cache_dir,
-                       ma_alphas=ma_alphas,
-                       display=False)
 
 max_xoffset = 0.1
 max_voffset = 0.1
@@ -149,6 +135,22 @@ episode_info = {}
 state_aggregated = env.reset()
 done = False
 
+piv_truth_dirs = [
+    '/media/kennychufk/vol1bk0/20210415_162749-laser-too-high/',
+    '/media/kennychufk/vol1bk0/20210415_164304/',
+    '/media/kennychufk/vol1bk0/20210416_101435/',
+    '/media/kennychufk/vol1bk0/20210416_102548/',
+    '/media/kennychufk/vol1bk0/20210416_103739/',
+    '/media/kennychufk/vol1bk0/20210416_104936/',
+    '/media/kennychufk/vol1bk0/20210416_120534/'
+]
+env_piv = EnvironmentPIV(dp,
+                         truth_dirs=piv_truth_dirs,
+                         cache_dir=args.cache_dir,
+                         ma_alphas=config['ma_alphas'],
+                         display=args.display,
+                         volume_method=al.VolumeMethod.pellets)
+
 for t in range(max_timesteps):
     episode_t += 1
     if t < agent.learn_after:
@@ -182,7 +184,8 @@ for t in range(max_timesteps):
             log_object['score100'] = np.mean(list(score_history))
 
         for key in episode_info:
-            log_object[key] = episode_info[key]
+            if (key != 'truth_sqr') and (key != 'num_masked'):
+                log_object[key] = episode_info[key]
 
         episode_id += 1
         episode_t = 0
@@ -193,7 +196,14 @@ for t in range(max_timesteps):
 
         if episode_id % 50 == 0:
             result_dict = {}
-            log_object['val_score'] = eval_agent(eval_env, agent, result_dict)
+            log_object['val-piv'] = eval_agent(env_piv,
+                                               agent,
+                                               result_dict,
+                                               report_state_action=False)
+            for result_key in result_dict:
+                log_object[result_key] = result_dict[result_key]
+            print('result_dict', result_dict)
+            print('log_object', log_object)
             save_dir = f"artifacts/{wandb.run.id}/models/{episode_id}"
             Path(save_dir).mkdir(parents=True, exist_ok=True)
             agent.save_models(save_dir)

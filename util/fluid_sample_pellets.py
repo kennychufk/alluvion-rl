@@ -4,7 +4,7 @@ import alluvion as al
 
 class FluidSamplePellets:
 
-    def __init__(self, dp, x_src):
+    def __init__(self, dp, x_src, cni):
         set_with_file = isinstance(x_src, str)
         self.num_samples = dp.get_alu_info(
             x_src)[0][0] if set_with_file else x_src.shape[0]
@@ -15,11 +15,11 @@ class FluidSamplePellets:
         self.sample_vort = dp.create_coated((self.num_samples), 3)
         self.sample_data1 = dp.create_coated((self.num_samples), 1)
         self.sample_neighbors = dp.create_coated(
-            (self.num_samples, dp.cni.max_num_neighbors_per_particle), 4)
+            (self.num_samples, cni.max_num_neighbors_per_particle), 4)
         self.sample_num_neighbors = dp.create_coated((self.num_samples), 1,
                                                      np.uint32)
         self.sample_pellet_neighbors = dp.create_coated(
-            (self.num_samples, dp.cni.max_num_neighbors_per_particle), 4)
+            (self.num_samples, cni.max_num_neighbors_per_particle), 4)
         self.sample_num_pellet_neighbors = dp.create_coated((self.num_samples),
                                                             1, np.uint32)
         self.sample_boundary_kernel_combined = dp.create_coated(

@@ -66,15 +66,17 @@ env_piv = EnvironmentPIV(dp,
                          truth_dirs=piv_truth_dirs,
                          cache_dir=args.cache_dir,
                          ma_alphas=config['ma_alphas'],
-                         display=args.display)
-
+                         display=args.display,
+                         volume_method=al.VolumeMethod.pellets)
 
 if args.model_iteration < 0:
     history = run.scan_history(keys=None,
                                page_size=1000,
                                min_step=None,
                                max_step=None)
-    wandb.init(project='alluvion-rl', id=f'{args.run_id}AugSim')
+    wandb.init(project='alluvion-rl',
+               id=f'{args.run_id}Augg',
+               tags=['piv-eval'])
     for key in config:
         wandb.config[key] = config[key]
     for row_id, row in enumerate(history):
@@ -88,12 +90,17 @@ if args.model_iteration < 0:
         if episode_id % 50 == 0:
             agent.load_models(f'artifacts/{args.run_id}/models/{episode_id}/')
             result_dict = {}
-            log_object['val-again'] = eval_agent(eval_env, agent, result_dict)
-            # log_object['val-piv'] = eval_agent(env_piv, agent, result_dict)
+            # log_object['val-again'] = eval_agent(eval_env, agent, result_dict)
+            log_object['val-piv'] = eval_agent(env_piv,
+                                               agent,
+                                               result_dict,
+                                               report_state_action=False)
             for result_key in result_dict:
-                log_object[result_key] = result_dict[result_key]
+                if (result_key != 'truth_sqr') and (key != 'num_masked'):
+                    log_object[result_key] = result_dict[result_key]
         wandb.log(log_object)
 else:
-    agent.load_models(f'artifacts/{args.run_id}/models/{args.model_iteration}/')
+    agent.load_models(
+        f'artifacts/{args.run_id}/models/{args.model_iteration}/')
     result_dict = {}
-    eval_agent(env_piv, agent, result_dict)
+    eval_agent(env_piv, agent, result_dict, report_state_action=True)
