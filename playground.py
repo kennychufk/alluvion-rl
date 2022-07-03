@@ -15,6 +15,7 @@ import time
 
 from rl import TD3, OrnsteinUhlenbeckProcess, GaussianNoise
 from util import Environment, EnvironmentPIV, get_state_dim, get_action_dim, eval_agent
+from util import symmetrize_action, symmetrize_state
 
 parser = argparse.ArgumentParser(description='RL playground')
 parser.add_argument('--seed', type=int, default=2021)
@@ -165,8 +166,12 @@ for t in range(max_timesteps):
     done_int = int(done)
 
     for buoy_id in range(env.num_buoys):
-        agent.remember(state_aggregated[buoy_id], action_aggregated[buoy_id],
-                       reward, new_state_aggregated[buoy_id], done_int)
+        state_symmetrized = symmetrize_state(state_aggregated[buoy_id])
+        action_symmetrized = symmetrize_action(action_aggregated[buoy_id])
+        new_state_symmetrized = symmetrize_state(new_state_aggregated[buoy_id])
+        for transform_id in range(len(state_symmetrized)):
+            agent.remember(state_symmetrized[transform_id], action_symmetrized[transform_id],
+                           reward, new_state_symmetrized[transform_id], done_int)
     episode_reward += reward
     state_aggregated = new_state_aggregated
     for key in info:

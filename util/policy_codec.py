@@ -22,6 +22,32 @@ def get_coil_x_from_com(dp, unit, buoy_spec, buoy_x_real, buoy_q, num_buoys):
     return coil_x_real
 
 
+def symmetrize_vector(v):
+    return np.stack([
+        v,
+        np.array([v[2], v[1], -v[0]]),
+        np.array([-v[0], v[1], -v[2]]),
+        np.array([-v[2], v[1], v[0]]),
+        np.array([v[0], v[1], -v[2]]),
+        np.array([-v[2], v[1], -v[0]]),
+        np.array([-v[0], v[1], v[2]]),
+        np.array([v[2], v[1], v[0]]),
+    ])
+
+
+def symmetrize_quat3(q3):
+    return np.stack([
+        q3,
+        np.array([q3[1], -q3[0], q3[2]]),
+        np.array([-q3[0], -q3[1], q3[2]]),
+        np.array([-q3[1], q3[0], q3[2]]),
+        np.array([-q3[0], q3[1], q3[2]]),
+        np.array([q3[1], q3[0], q3[2]]),
+        np.array([q3[0], -q3[1], q3[2]]),
+        np.array([-q3[1], -q3[0], q3[2]])
+    ])
+
+
 # using real unit except density: which is relative to density0
 def make_state(dp, unit, kinematic_viscosity_real, buoy_v_real, buoy_v_ma0,
                buoy_v_ma1, buoy_v_ma2, buoy_v_ma3, buoy_q, coil_x_real,
@@ -70,6 +96,27 @@ def make_state(dp, unit, kinematic_viscosity_real, buoy_v_real, buoy_v_ma0,
                 num_buoys / 10),
             axis=None)
     return state_aggregated
+
+
+def symmetrize_scalar(s):
+    return np.repeat(s, 8)[:, np.newaxis]
+
+
+def symmetrize_state(state):
+    return np.hstack(
+        (symmetrize_vector(state[0:3]), symmetrize_vector(state[3:6]),
+         symmetrize_vector(state[6:9]), symmetrize_vector(state[9:12]),
+         symmetrize_vector(state[12:15]), symmetrize_quat3(state[15:18]),
+         symmetrize_vector(state[18:21]), symmetrize_vector(state[21:24]),
+         symmetrize_vector(state[24:27]), symmetrize_vector(state[27:30]),
+         symmetrize_vector(state[30:33]), symmetrize_scalar(state[33]),
+         symmetrize_scalar(state[34])))
+
+
+def symmetrize_action(action):
+    return np.hstack(
+        (symmetrize_vector(action[0:3]), symmetrize_vector(action[3:6]),
+         symmetrize_scalar(action[6]), symmetrize_scalar(action[7])))
 
 
 def set_usher_param(usher, dp, unit, buoy_v_real, coil_x_real,
