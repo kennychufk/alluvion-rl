@@ -9,6 +9,59 @@ import torch.optim as optim
 from .replay_buffer import ReplayBuffer
 
 
+def symmetrize_vector_batch(v):
+    return torch.vstack([
+        v,
+        torch.stack((v[:, 2], v[:, 1], -v[:, 0]), axis=1),
+        torch.stack((-v[:, 0], v[:, 1], -v[:, 2]), axis=1),
+        torch.stack((-v[:, 2], v[:, 1], v[:, 0]), axis=1),
+        torch.stack((v[:, 0], v[:, 1], -v[:, 2]), axis=1),
+        torch.stack((-v[:, 2], v[:, 1], -v[:, 0]), axis=1),
+        torch.stack((-v[:, 0], v[:, 1], v[:, 2]), axis=1),
+        torch.stack((v[:, 2], v[:, 1], v[:, 0]), axis=1),
+    ])
+
+
+def symmetrize_quat3_batch(q3):
+    return torch.vstack([
+        q3,
+        torch.stack((q3[:, 1], -q3[:, 0], q3[:, 2]), axis=1),
+        torch.stack((-q3[:, 0], -q3[:, 1], q3[:, 2]), axis=1),
+        torch.stack((-q3[:, 1], q3[:, 0], q3[:, 2]), axis=1),
+        torch.stack((-q3[:, 0], q3[:, 1], q3[:, 2]), axis=1),
+        torch.stack((q3[:, 1], q3[:, 0], q3[:, 2]), axis=1),
+        torch.stack((q3[:, 0], -q3[:, 1], q3[:, 2]), axis=1),
+        torch.stack((-q3[:, 1], -q3[:, 0], q3[:, 2]), axis=1),
+    ])
+
+
+def symmetrize_scalar_batch(s):
+    return torch.tile(s, (8, )).unsqueeze(1)
+
+
+def symmetrize_state_batch(state_batch):
+    return torch.hstack((symmetrize_vector_batch(state_batch[:, 0:3]),
+                         symmetrize_vector_batch(state_batch[:, 3:6]),
+                         symmetrize_vector_batch(state_batch[:, 6:9]),
+                         symmetrize_vector_batch(state_batch[:, 9:12]),
+                         symmetrize_vector_batch(state_batch[:, 12:15]),
+                         symmetrize_quat3_batch(state_batch[:, 15:18]),
+                         symmetrize_vector_batch(state_batch[:, 18:21]),
+                         symmetrize_vector_batch(state_batch[:, 21:24]),
+                         symmetrize_vector_batch(state_batch[:, 24:27]),
+                         symmetrize_vector_batch(state_batch[:, 27:30]),
+                         symmetrize_vector_batch(state_batch[:, 30:33]),
+                         symmetrize_scalar_batch(state_batch[:, 33]),
+                         symmetrize_scalar_batch(state_batch[:, 34])))
+
+
+def symmetrize_action_batch(action_batch):
+    return torch.hstack((symmetrize_vector_batch(action_batch[:, 0:3]),
+                         symmetrize_vector_batch(action_batch[:, 3:6]),
+                         symmetrize_scalar_batch(action_batch[:, 6]),
+                         symmetrize_scalar_batch(action_batch[:, 7])))
+
+
 class MLPTwinCritic(nn.Module):
 
     def __init__(self, state_dim, action_dim, hidden_sizes, final_layer_scale):
@@ -173,6 +226,12 @@ class TD3:
         state, action, reward, new_state, term = self.memory.sample_buffer(
             self.batch_size)
 
+        state = symmetrize_state_batch(state)
+        reward = symmetrize_scalar_batch(reward)
+        term = symmetrize_scalar_batch(term)
+        new_state = symmetrize_state_batch(new_state)
+        action = symmetrize_action_batch(action)
+
         # Optimize critic
         self.target_actor.eval()
         self.target_critic.eval()
@@ -183,9 +242,7 @@ class TD3:
 
             target_q0, target_q1 = self.target_critic(new_state, new_action)
             target_q = torch.min(target_q0, target_q1)
-            target_q = reward.view(
-                self.batch_size,
-                1) + self.gamma * term.view(self.batch_size, 1) * target_q
+            target_q = reward + self.gamma * term * target_q
 
         current_q0, current_q1 = self.critic.forward(state, action)
         critic_loss = F.mse_loss(current_q0, target_q) + F.mse_loss(
