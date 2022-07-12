@@ -55,6 +55,17 @@ cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
 agitator_option = 'stirrer/stirrer'
+# agitator_options = [
+#     'bunny/bunny',
+#     '03797390/ec846432f3ebedf0a6f32a8797e3b9e9',
+#     '03046257/757fd88d3ddca2403406473757712946',
+#     '02942699/9db4b2c19c858a36eb34db531a289b8e',
+#     '03261776/1d4f9c324d6388a9b904f4192b538029',
+#     '03325088/daa26435e1603392b7a867e9b35a1295',
+#     '03513137/91c0193d38f0c5338c9affdacaf55648',
+# ]
+# agitator_option = agitator_options[np.random.randint(
+#     low=0, high=len(agitator_options))]
 
 agitator_model_dir = f'{args.shape_dir}/{agitator_option}/models'
 agitator_mesh_filename = f'{agitator_model_dir}/manifold2-decimate-2to-8.obj'
@@ -169,7 +180,8 @@ agitator_id = pile.add_pellets(agitator_distance,
                                friction=0.3,
                                inertia_tensor=agitator_inertia,
                                display_mesh=agitator_mesh)
-exp_dir = '/media/kennychufk/vol1bk0/20210415_162749-laser-too-high/'
+exp_dir = '/media/kennychufk/vol1bk0/20210415_162749-laser-too-high/' # diagonal stir
+# exp_dir = '/media/kennychufk/vol1bk0/20210416_114327/' # diagonal & circular
 
 
 def transform_robot_position(pos_real):
@@ -179,8 +191,14 @@ def transform_robot_position(pos_real):
 
 
 interpolator = RigidInterpolator(dp, unit, f'{exp_dir}/Trace.csv')
+# NOTE: for stirrer
+shift_for_centered_agitator = dp.f3(0, 0, 0)
 pile.x[agitator_id] = unit.from_real_length(
     transform_robot_position(interpolator.get_x_real_from_real_t(0)))
+# # NOTE: for centered agitator
+# shift_for_centered_agitator = dp.f3(0, -0.19, 0)
+# pile.x[agitator_id] = unit.from_real_length(
+#     transform_robot_position(interpolator.get_x_real_from_real_t(0)) + shift_for_centered_agitator)
 dp.remove(agitator_pellet_x)
 for i in range(num_buoys):
     buoy_id = i + 1
@@ -406,7 +424,7 @@ while not rest_state_achieved or solver.t < target_t:
 
             pile.v[agitator_id] = interpolator.get_v(solver.t)
             pile.x[agitator_id] = unit.from_real_length(
-                transform_robot_position(interpolator.get_x_real(solver.t)))
+                transform_robot_position(interpolator.get_x_real(solver.t))+shift_for_centered_agitator)
         else:  # if not rest_state_achieved
             v_rms = np.sqrt(
                 runner.sum(solver.particle_cfl_v2, solver.num_particles) /

@@ -248,6 +248,29 @@ class Environment:
         self.mask = self.dp.create_coated(
             (self.simulation_sampling.num_samples), 1, np.uint32)
 
+    def reset_buoy_interpolators(self):
+        marker_dtype = np.dtype([('t', np.float32), ('x', np.float32, 3),
+                                 ('q', np.float32, 4)])
+        buoy_trajectories = np.empty((self.num_buoys, self._max_episode_steps),
+                                     dtype=marker_dtype)
+        for episode_t in range(self._max_episode_steps):
+            truth_pile_x, truth_pile_v, truth_pile_q, truth_pile_omega = read_pile(
+                f'{self.truth_dir}/{episode_t}.pile')
+            buoy_trajectories[:, episode_t]['x'] = truth_pile_x[1:1 +
+                                                                self.num_buoys]
+            buoy_trajectories[:, episode_t]['q'] = np.roll(
+                truth_pile_q[1:1 + self.num_buoys], -1, axis=1)
+        for buoy_id in range(self.num_buoys):
+            buoy_trajectories[buoy_id]['x'] += np.tile(
+                np.random.normal(scale=2e-3, size=(3)),
+                self._max_episode_steps).reshape(-1, 3)
+        self.buoy_interpolators = [
+            BuoyInterpolator(self.dp,
+                             sample_interval=0.01,
+                             trajectory=trajectory)
+            for trajectory in buoy_trajectories
+        ]
+
     def reset_solver_properties(self):
         self.unit = Unit(real_kernel_radius=self.unit.rl,
                          real_density0=np.load(
@@ -290,6 +313,7 @@ class Environment:
     def reset(self):
         self.reset_truth_dir()
         self.reset_vectors()
+        self.reset_buoy_interpolators()
         self.reset_solver_properties()
         self.reset_solver_initial()
         self.dp.copy_cn_external(self.cn, self.cni)
@@ -301,10 +325,18 @@ class Environment:
         return state_aggregated
 
     def get_buoy_kinematics_real(self, episode_t):
-        truth_pile_x, truth_pile_v, truth_pile_q, truth_pile_omega = read_pile(
-            f'{self.truth_dir}/{episode_t}.pile')
-        return truth_pile_x[1:1 + self.num_buoys], truth_pile_v[
-            1:1 + self.num_buoys], truth_pile_q[1:1 + self.num_buoys]
+        t_real = episode_t * self.truth_real_interval
+        buoy_v_shift = np.zeros(3, self.dp.default_dtype)
+        buoys_x = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
+        buoys_v = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
+        buoys_q = np.zeros((self.num_buoys, 4), self.dp.default_dtype)
+
+        for buoy_id in range(self.num_buoys):
+            buoys_x[buoy_id] = self.buoy_interpolators[buoy_id].get_x(t_real)
+            buoys_v[buoy_id] = self.buoy_interpolators[buoy_id].get_v(
+                t_real) + buoy_v_shift
+            buoys_q[buoy_id] = self.buoy_interpolators[buoy_id].get_q(t_real)
+        return buoys_x, buoys_v, buoys_q
 
     def collect_state(self, episode_t):
         buoy_x_real, self.buoy_v_real, buoy_q = self.get_buoy_kinematics_real(
@@ -466,6 +498,7 @@ class EnvironmentPIV(Environment):
         self.truth_v_collection[..., 1] = truth_v_piv[..., 1]
         self._max_episode_steps = len(truth_v_piv)
 
+    def reset_buoy_interpolators(self):
         used_buoy_ids = np.load(f'{self.truth_dir}/rec/marker_ids.npy')
         buoy_trajectories = [
             np.load(

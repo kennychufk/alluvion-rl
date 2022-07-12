@@ -75,7 +75,7 @@ if args.model_iteration < 0:
                                min_step=None,
                                max_step=None)
     wandb.init(project='alluvion-rl',
-               id=f'{args.run_id}Augg',
+               id=f'{args.run_id}Augh',
                tags=['piv-eval'])
     for key in config:
         wandb.config[key] = config[key]

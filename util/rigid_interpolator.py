@@ -54,7 +54,12 @@ class BuoyInterpolator:
         self.dp = dp
         times = np.arange(len(trajectory)) * sample_interval
         self.cubic_spline = CubicSpline(times, trajectory['x'])
-        self.slerp = Slerp(times, R.from_quat(trajectory['q']))
+        self.slerp = Slerp(
+            times, R.from_quat(np.roll(trajectory['q'], -1, axis=-1))
+        )  # TODO: change emstrobol output format to prevent similar bugs?
+        # both scipy and alluvion(float4) uses <x, y, z, w>
+        # only penrose/emstrobol uses <w, x, y, z>
+        # TODO: redo offline regression due to the presence of better DNN model params
 
     def get_x(self, t):
         return self.cubic_spline(t)

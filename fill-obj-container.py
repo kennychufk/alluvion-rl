@@ -9,8 +9,9 @@ from scipy.spatial.transform import Rotation as R
 from PIL import Image
 
 import alluvion as al
+import alluvol
 
-from util import Unit, FluidSamplePellets, get_timestamp_and_hash, BuoySpec, parameterize_kinematic_viscosity, RigidInterpolator
+from util import Unit, FluidSamplePellets, get_timestamp_and_hash, BuoySpec, parameterize_kinematic_viscosity_with_pellets, RigidInterpolator
 
 parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--output-dir', type=str, default='.')
@@ -49,8 +50,7 @@ cn.boundary_epsilon = 1e-9
 cn.gravity = gravity
 kinematic_viscosity_real = 21.9e-3 / density0_real  # TODO: discrete, either water or GWM
 cn.viscosity, cn.boundary_viscosity = unit.from_real_kinematic_viscosity(
-    parameterize_kinematic_viscosity(kinematic_viscosity_real)
-)  # TODO: should change to parameterize_kinematic_viscosity_with_pellets!!!
+    parameterize_kinematic_viscosity_with_pellets(kinematic_viscosity_real))
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
@@ -61,15 +61,10 @@ agitator_options = [
     '02942699/9db4b2c19c858a36eb34db531a289b8e',
     '03261776/1d4f9c324d6388a9b904f4192b538029',
     '03325088/daa26435e1603392b7a867e9b35a1295',
-    '03759954/35f36e337df50fcb92b3c4741299c1af',
-    # '04401088/e5bb37415abcf3b7e1c1039f91f43fda',
-    # '04530566/66a90b7b92ff2549f2635cfccf45023',
-    # '03513137/91c0193d38f0c5338c9affdacaf55648',
-    # '03636649/83353863ea1349682ebeb1e6a8111f53'
+    '03513137/91c0193d38f0c5338c9affdacaf55648',
 ]
-
-agitator_selected_id = 0
-agitator_option = agitator_options[agitator_selected_id]
+agitator_option = agitator_options[np.random.randint(
+    low=0, high=len(agitator_options))]
 
 agitator_model_dir = f'{args.shape_dir}/{agitator_option}/models'
 agitator_mesh_filename = f'{agitator_model_dir}/manifold2-decimate-2to-8.obj'
@@ -150,12 +145,6 @@ for i in range(num_buoys):
                                    container_distance.aabb_max),
                                q=dp.f4(0, 0, 0, 1),
                                display_mesh=buoy.mesh)
-    while (has_collision(pile, buoy_id)):
-        print('has collision', pile.x[buoy_id])
-        pile.x[buoy_id] = get_random_position(container_distance.aabb_min,
-                                              container_distance.aabb_max)
-for i in range(num_buoys):
-    print(f"{i+1}: {pile.x[i+1]}")
 dp.remove(buoy_pellet_x)
 pile.hint_identical_sequence(1, pile.get_size())
 
@@ -194,11 +183,16 @@ agitator_id = pile.add_pellets(agitator_distance,
                                    container_distance.aabb_max),
                                q=get_random_quat(),
                                display_mesh=agitator_mesh)
-dp.remove(agitator_pellet_x)
-while has_collision(pile, agitator_id):
+while (has_collision(pile, agitator_id)):
     pile.x[agitator_id] = get_random_position(container_distance.aabb_min,
                                               container_distance.aabb_max)
-    pile.q[agitator_id] = get_random_quat()
+dp.remove(agitator_pellet_x)
+for i in range(num_buoys):
+    buoy_id = i + 1
+    while (has_collision(pile, buoy_id)):
+        print('has collision', pile.x[buoy_id])
+        pile.x[buoy_id] = get_random_position(container_distance.aabb_min,
+                                              container_distance.aabb_max)
 
 pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
@@ -234,7 +228,8 @@ num_samples = pile.compute_sort_fluid_block_internal_all(
     particle_radius=sample_radius,
     mode=sample_x_fill_mode)
 print('num_samples', num_samples)
-sampling = FluidSamplePellets(dp, np.zeros((num_samples, 3), dp.default_dtype))
+sampling = FluidSamplePellets(dp, np.zeros((num_samples, 3), dp.default_dtype),
+                              dp.cni)
 runner.launch_create_fluid_block_internal(sampling.sample_x,
                                           sample_internal_encoded,
                                           num_samples,
@@ -448,7 +443,7 @@ while not rest_state_achieved or solver.t < target_t:
                 last_tranquillized = solver.t
             elif unit.to_real_time(solver.t - last_tranquillized
                                    ) > 0.4 and unit.to_real_velocity(
-                                       v_rms) < 0.030:
+                                       v_rms) < 0.015:
                 print("rest state achieved at", unit.to_real_time(solver.t))
                 solver.t = 0
                 rest_state_achieved = True
