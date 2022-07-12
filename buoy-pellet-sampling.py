@@ -38,8 +38,8 @@ pile = dp.Pile(dp,
                max_num_contacts=0,
                volume_method=al.VolumeMethod.pellets,
                max_num_pellets=0)
-outset = unit.from_real_length(0e-5)
-pile.add(buoy.create_distance(-outset), buoy.map_dim, sign=-1)
+inset = unit.from_real_length(10e-5)
+pile.add(buoy.create_distance(inset), buoy.map_dim, sign=-1)
 pile.reallocate_kinematics_on_device()
 
 # ========= sampling
@@ -79,9 +79,9 @@ internal_encoded = dp.create((num_sample_positions), 1, np.uint32)
 max_num_pellets = pile.compute_sort_fluid_cylinder_internal_all(
     internal_encoded, buoy.radius, fill_particle_radius, fill_domain_min.y,
     fill_domain_max.y)
-max_num_pellets -= 1
+max_num_pellets -= 40
 print("num_pellets for filling", max_num_pellets)
-x = dp.create((max_num_pellets), 3)
+x = dp.create_coated((max_num_pellets), 3)
 runner.launch_create_fluid_cylinder_internal(x, internal_encoded,
                                              max_num_pellets, 0, buoy.radius,
                                              fill_particle_radius,
@@ -110,7 +110,6 @@ display_proxy.add_particle_shading_program(solver.particle_x,
                                            solver.particle_radius,
                                            solver,
                                            clear=True)
-
 for fill_step_id in range(2000):
     display_proxy.draw()
     dp.map_graphical_pointers()
@@ -119,8 +118,7 @@ for fill_step_id in range(2000):
     time.sleep(0.01)
     solver.normalize(solver.particle_v, pellet_normalized_attr, 0,
                      kernel_radius * 0.2)
-    pellet_density = dp.coat(
-        solver.particle_density).get()[:solver.num_particles]
+    pellet_density = dp.coat(solver.particle_density).get(solver.num_particles)
     max_pellet_density = np.max(pellet_density)
     min_pellet_density = np.min(pellet_density)
     mean_pellet_density = np.mean(pellet_density)

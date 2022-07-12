@@ -178,9 +178,6 @@ while True:
                 num_stabilized = 0
                 stabilization_target = 5
                 buoyant_force_cursor = 0
-                import sys
-                sys.exit(0)
-                # TODO: replace buoy pellets
 
     if num_stabilized >= stabilization_target:
         pass
