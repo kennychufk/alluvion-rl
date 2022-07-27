@@ -67,7 +67,8 @@ class Environment:
                  cache_dir,
                  ma_alphas,
                  display,
-                 volume_method=al.VolumeMethod.pellets):
+                 volume_method=al.VolumeMethod.pellets,
+                 save_visual=False):
         self.dp = dp
         self.cn, self.cni = self.dp.create_cn()
         self.display = display
@@ -77,6 +78,7 @@ class Environment:
         self.runner = self.dp.Runner()
         self.volume_method = volume_method
         self.cache_dir = cache_dir
+        self.save_visual = save_visual
 
         # === constants
         self.init_particle_files()
@@ -198,6 +200,13 @@ class Environment:
 
         self.truth_real_freq = 100.0
         self.truth_real_interval = 1.0 / self.truth_real_freq
+
+        self.visual_real_interval = 1.0 / 30.0
+        self.next_visual_frame_id = 0
+        if self.save_visual:
+            self.visual_x_scaled = self.dp.create_coated_like(
+                self.solver.particle_x)
+            self.save_dir_visual = None
 
         if display:
             self.display_proxy.set_camera(
@@ -412,6 +421,22 @@ class Environment:
                                             self.truth_real_interval)
         while (self.solver.t < target_t):
             self.solver.step()
+            if self.solver.t >= self.unit.from_real_time(
+                    self.next_visual_frame_id * self.visual_real_interval):
+                self.visual_x_scaled.set_from(self.solver.particle_x,
+                                              self.solver.num_particles)
+                self.visual_x_scaled.scale(self.unit.to_real_length(1))
+                if self.save_dir_visual is not None:
+                    self.visual_x_scaled.write_file(
+                        f'{str(self.save_dir_visual)}/visual-x-{self.next_visual_frame_id}.alu',
+                        self.solver.num_particles)
+                    self.pile.write_file(
+                        f'{str(self.save_dir_visual)}/visual-{self.next_visual_frame_id}.pile',
+                        self.unit.to_real_length(1),
+                        self.unit.to_real_velocity(1),
+                        self.unit.to_real_angular_velocity(1))
+                self.next_visual_frame_id += 1
+
         new_state_aggregated = self.collect_state(self.episode_t + 1)
 
         # find reward
@@ -460,9 +485,10 @@ class EnvironmentPIV(Environment):
                  ma_alphas,
                  display,
                  buoy_filter_postfix='-f18',
-                 volume_method=al.VolumeMethod.pellets):
+                 volume_method=al.VolumeMethod.pellets,
+                 save_visual=False):
         super().__init__(dp, truth_dirs, cache_dir, ma_alphas, display,
-                         volume_method)
+                         volume_method, save_visual)
         self.container_shift = dp.f3(0, self.container_width * 0.5, 0)
         self.pile.x[0] = self.container_shift
         self.cni.grid_offset.y = -4

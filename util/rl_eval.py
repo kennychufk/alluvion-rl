@@ -29,7 +29,13 @@ def eval_agent(eval_env, agent, result_dict, report_state_action=False):
                  eval_env.simulation_sampling.num_samples, 3))
             cursor = 0
         dirname_short = Path(eval_env.truth_dir).name[4:15]
+        if report_state_action or eval_env.save_visual:
+            report_save_dir = Path(f'val-{dirname_short}-{timestamp_hash}')
+            report_save_dir.mkdir(parents=True)
+            if eval_env.save_visual:
+                eval_env.save_dir_visual = report_save_dir
         while not done:
+            # action = agent.get_action_symmetrized(state)
             action = agent.get_action(state, enable_noise=False)
             real_action = agent.actor.from_normalized_action(action)
             if (report_state_action):
@@ -54,12 +60,10 @@ def eval_agent(eval_env, agent, result_dict, report_state_action=False):
         episode_error_accm = 0
         episode_truth_accm = 0
         if (report_state_action):
-            report_save_dir = Path(f'val-{dirname_short}-{timestamp_hash}')
-            report_save_dir.mkdir(parents=True)
             np.save(f'{str(report_save_dir)}/state.npy', state_history)
             np.save(f'{str(report_save_dir)}/action.npy', action_history)
             np.save(f'{str(report_save_dir)}/sim_v_real.npy', sim_v_history)
-            np.save(f'{str(report_save_dir)}/truth_v_real.npy',
-                    eval_env.truth_v_collection)
+            # np.save(f'{str(report_save_dir)}/truth_v_real.npy',
+            #         eval_env.truth_v_collection)
 
     return all_episodes_error_accm / all_episodes_mask_accm
