@@ -62,6 +62,31 @@ def symmetrize_action_batch(action_batch):
                          symmetrize_scalar_batch(action_batch[:, 7])))
 
 
+def average_out_symmetric_x(symmetric):
+    return (symmetric[0, :, 0] - symmetric[1, :, 2] - symmetric[2, :, 0] +
+            symmetric[3, :, 2] + symmetric[4, :, 0] - symmetric[5, :, 2] -
+            symmetric[6, :, 0] + symmetric[7, :, 2]) * 0.125
+
+
+def average_out_symmetric_z(symmetric):
+    return (symmetric[0, :, 2] + symmetric[1, :, 0] - symmetric[2, :, 2] -
+            symmetric[3, :, 0] - symmetric[4, :, 2] - symmetric[5, :, 0] +
+            symmetric[6, :, 2] + symmetric[7, :, 0]) * 0.125
+
+
+def average_out_symmetric_y(symmetric):
+    return torch.mean(symmetric[:, :, 1], dim=0)
+
+
+def average_out_scalar(symmetric):
+    return torch.mean(symmetric, dim=0)
+
+
+def average_out_symmetric_vector(symmetric):
+    return average_out_symmetric_x(symmetric), average_out_symmetric_y(
+        symmetric), average_out_symmetric_z(symmetric)
+
+
 class MLPTwinCritic(nn.Module):
 
     def __init__(self, state_dim, action_dim, hidden_sizes, final_layer_scale):
@@ -212,6 +237,22 @@ class TD3:
             np.clip(mu, -1, 1, out=mu)
         self.actor.train()
         return mu
+
+    def get_action_symmetrized(self, state):
+        self.actor.eval()
+        state = torch.tensor(state, dtype=torch.float).to(torch.device('cuda'))
+        state = symmetrize_state_batch(state)
+        mu = self.actor.forward(state).cpu().detach()
+        mu_grouped = mu.view(8, -1, self.action_dim)
+        self.actor.train()
+        averaged_out = torch.stack([
+            *average_out_symmetric_vector(mu_grouped[:, :, 0:3]),
+            *average_out_symmetric_vector(mu_grouped[:, :, 3:6]),
+            average_out_scalar(mu_grouped[:, :, 6]),
+            average_out_scalar(mu_grouped[:, :, 7]),
+        ],
+                                   dim=1)
+        return averaged_out.numpy()
 
     def get_value(self, state, action):
         return self.critic.forward(
