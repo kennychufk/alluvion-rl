@@ -6,28 +6,26 @@ import numpy as np
 import subprocess
 import os
 from scipy.spatial.transform import Rotation as R
-from PIL import Image
 
 import alluvion as al
 import alluvol
 
-from util import Unit, FluidSamplePellets, get_timestamp_and_hash, BuoySpec, parameterize_kinematic_viscosity_with_pellets, RigidInterpolator
+from util import Unit, FluidSamplePellets, get_timestamp_and_hash, BuoySpec, parameterize_kinematic_viscosity_with_pellets, RigidInterpolator, LeapInterpolator, get_agitator_offset
 
 parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--output-dir', type=str, default='.')
-parser.add_argument('--write-visual', type=bool, default=False)
-parser.add_argument('--render', type=bool, default=False)
+parser.add_argument('--render', type=int, default=0)
 parser.add_argument('--shape-dir', type=str, required=True)
-parser.add_argument('--seed', type=int, required=True)
-parser.add_argument('--num-buoys', type=int, required=True)
 args = parser.parse_args()
-np.random.seed(args.seed)
+import random
+
+seed = random.randint(0, 33554432)
+np.random.seed(seed)
 dp = al.Depot(np.float32)
 cn = dp.cn
 cni = dp.cni
 dp.create_display(800, 600, "alluvion-fixed", False)
 display_proxy = dp.get_display_proxy()
-framebuffer = display_proxy.create_framebuffer()
 runner = dp.Runner()
 
 particle_radius = 0.25
@@ -39,7 +37,20 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
 
-density0_real = 1156.2
+fluid_property_options = [
+    [1156.2, 21.9e-3],  #GWM
+    [997.28, 1.03e-3],  #water
+    [1195.48, 2.74e-3],  #salt water
+    [800, 2.168e-3],  # kerosene
+    [
+        1142, 8.365e-3
+    ],  # 50% GWM (by V) # http://www.met.reading.ac.uk/~sws04cdw/viscosity_calc.html
+    [988.05, 0.5474e-3],  #water at 50 celcius
+]
+
+density0_real, dynamic_viscosity_real = fluid_property_options[
+    np.random.randint(low=0, high=len(fluid_property_options))]
+
 unit = Unit(real_kernel_radius=2**-8,
             real_density0=density0_real,
             real_gravity=-9.80665)
@@ -48,24 +59,24 @@ cn.set_kernel_radius(kernel_radius)
 cn.set_particle_attr(particle_radius, particle_mass, density0)
 cn.boundary_epsilon = 1e-9
 cn.gravity = gravity
-kinematic_viscosity_real = 21.9e-3 / density0_real  # TODO: discrete, either water or GWM
+kinematic_viscosity_real = dynamic_viscosity_real / density0_real  # TODO: discrete, either water or GWM
 cn.viscosity, cn.boundary_viscosity = unit.from_real_kinematic_viscosity(
     parameterize_kinematic_viscosity_with_pellets(kinematic_viscosity_real))
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
-agitator_option = 'stirrer/stirrer'
-# agitator_options = [
-#     'bunny/bunny',
-#     '03797390/ec846432f3ebedf0a6f32a8797e3b9e9',
-#     '03046257/757fd88d3ddca2403406473757712946',
-#     '02942699/9db4b2c19c858a36eb34db531a289b8e',
-#     '03261776/1d4f9c324d6388a9b904f4192b538029',
-#     '03325088/daa26435e1603392b7a867e9b35a1295',
-#     '03513137/91c0193d38f0c5338c9affdacaf55648',
-# ]
-# agitator_option = agitator_options[np.random.randint(
-#     low=0, high=len(agitator_options))]
+# agitator_option = 'stirrer/stirrer'
+agitator_options = [
+    'bunny/bunny',
+    '03797390/ec846432f3ebedf0a6f32a8797e3b9e9',
+    '03046257/757fd88d3ddca2403406473757712946',
+    '02942699/9db4b2c19c858a36eb34db531a289b8e',
+    '03261776/1d4f9c324d6388a9b904f4192b538029',
+    '03325088/daa26435e1603392b7a867e9b35a1295',
+    '03513137/91c0193d38f0c5338c9affdacaf55648',
+]
+agitator_option = agitator_options[np.random.randint(
+    low=0, high=len(agitator_options))]
 
 agitator_model_dir = f'{args.shape_dir}/{agitator_option}/models'
 agitator_mesh_filename = f'{agitator_model_dir}/manifold2-decimate-2to-8.obj'
@@ -74,7 +85,8 @@ container_pellet_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/
 buoy_pellet_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/buoy-2to-8.alu'
 agitator_pellet_filename = f'{agitator_model_dir}/manifold2-decimate-2to-8.alu'
 
-num_buoys = args.num_buoys
+num_buoys = np.random.randint(low=4, high=101)
+
 container_num_pellets = dp.get_alu_info(container_pellet_filename)[0][0]
 buoy_num_pellets = dp.get_alu_info(buoy_pellet_filename)[0][0]
 agitator_num_pellets = dp.get_alu_info(agitator_pellet_filename)[0][0]
@@ -180,25 +192,24 @@ agitator_id = pile.add_pellets(agitator_distance,
                                friction=0.3,
                                inertia_tensor=agitator_inertia,
                                display_mesh=agitator_mesh)
-exp_dir = '/media/kennychufk/vol1bk0/20210415_162749-laser-too-high/' # diagonal stir
-# exp_dir = '/media/kennychufk/vol1bk0/20210416_114327/' # diagonal & circular
+trajectory_options = [
+    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660827696187835-circular.npy",
+    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660981184729619-eight.npy",  # not useful
+    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660981300661176-horiloop.npy",
+    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660981516677005-pendulum.npy",
+    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660981564777114-vigorous-calm.npy",
+    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660981624648440-z.npy",
+    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1661086716905043-o.npy",
+]
 
+trajectory_option = trajectory_options[np.random.randint(
+    low=0, high=len(trajectory_options))]
 
-def transform_robot_position(pos_real):
-    return pos_real + dp.f3(
-        0.52, -(0.14294 + 0.015 + 0.005) - 0.12,
-        0)  # TODO: y offset is arbitrary, need verification
+agitator_offset = get_agitator_offset(trajectory_option, agitator_option)
 
-
-interpolator = RigidInterpolator(dp, unit, f'{exp_dir}/Trace.csv')
-# NOTE: for stirrer
-shift_for_centered_agitator = dp.f3(0, 0, 0)
-pile.x[agitator_id] = unit.from_real_length(
-    transform_robot_position(interpolator.get_x_real_from_real_t(0)))
-# # NOTE: for centered agitator
-# shift_for_centered_agitator = dp.f3(0, -0.19, 0)
-# pile.x[agitator_id] = unit.from_real_length(
-#     transform_robot_position(interpolator.get_x_real_from_real_t(0)) + shift_for_centered_agitator)
+interpolator = LeapInterpolator(dp, trajectory_option, agitator_offset)
+pile.x[agitator_id] = unit.from_real_length(interpolator.get_x(0))
+pile.q[agitator_id] = interpolator.get_q(0)
 dp.remove(agitator_pellet_x)
 for i in range(num_buoys):
     buoy_id = i + 1
@@ -221,7 +232,17 @@ reference_bead_v.read_file(reference_bead_v_filename)
 internal_encoded = dp.create_coated((num_positions), 1, np.uint32)
 max_fill_num_particles = pile.compute_sort_custom_beads_internal_all(
     internal_encoded, reference_bead_x)
-num_particles = int(3.250 / unit.to_real_mass(particle_mass))
+fluid_mass_options = [
+    2.75,
+    3.0,
+    3.25,  # GWM experiments
+    3.5,
+    3.75,
+    4,
+]
+fluid_mass = fluid_mass_options[np.random.randint(
+    low=0, high=len(fluid_mass_options))]
+num_particles = int(fluid_mass / unit.to_real_mass(particle_mass))
 print('num_particles', num_particles)
 
 ## ======== internal sample points
@@ -303,27 +324,28 @@ display_proxy.set_clip_planes(unit.to_real_length(1),
                               container_distance.aabb_max.z * 20)
 colormap_tex = display_proxy.create_colormap_viridis()
 
-display_proxy.add_bind_framebuffer_step(framebuffer)
 display_proxy.add_particle_shading_program(solver.particle_x,
                                            particle_normalized_attr,
                                            colormap_tex,
                                            solver.particle_radius, solver)
 display_proxy.add_pile_shading_program(pile)
-display_proxy.add_show_framebuffer_shader(framebuffer)
 display_proxy.resize(800, 600)
 
 timestamp_str, timestamp_hash = get_timestamp_and_hash()
 frame_directory = f'{args.output_dir}/rltruth-{timestamp_hash}-{timestamp_str}'
 Path(frame_directory).mkdir(parents=True, exist_ok=True)
 # =========== save config
-np.save(f'{frame_directory}/seed.npy', args.seed)
-np.save(f'{frame_directory}/num_buoys.npy', args.num_buoys)
-np.save(f'{frame_directory}/fluid_mass.npy',
-        unit.to_real_mass(num_particles * particle_mass))
+np.save(f'{frame_directory}/seed.npy', seed)
+np.save(f'{frame_directory}/num_buoys.npy', num_buoys)
+np.save(f'{frame_directory}/fluid_mass.npy', fluid_mass)
 np.save(f'{frame_directory}/density0_real.npy', density0_real)
+np.save(f'{frame_directory}/num_particles.npy', num_particles)
 np.save(f'{frame_directory}/agitator_option.npy', agitator_option)
+np.save(f'{frame_directory}/trajectory_option.npy', trajectory_option)
 np.save(f'{frame_directory}/kinematic_viscosity_real.npy',
         kinematic_viscosity_real)
+np.save(f'{frame_directory}/dynamic_viscosity_real.npy',
+        dynamic_viscosity_real)
 real_sample_x = dp.create_coated_like(sampling.sample_x)
 real_sample_x.set_from(sampling.sample_x)
 real_sample_x.scale(unit.to_real_length(1))
@@ -345,15 +367,17 @@ visual_v2_scaled = dp.create_coated_like(solver.particle_cfl_v2)
 target_t = unit.from_real_time(10.0)
 last_tranquillized = 0.0
 rest_state_achieved = False
+rest_state_achieved_time = 0
+additional_rest_elapsed = False
 
 next_force_time = 0.0
 remaining_force_time = 0.0
 
 v_rms = 0
-while not rest_state_achieved or solver.t < target_t:
+while not rest_state_achieved or not additional_rest_elapsed or solver.t < target_t:
     dp.map_graphical_pointers()
     for frame_interstep in range(10):
-        if rest_state_achieved:
+        if additional_rest_elapsed:
             if solver.t >= unit.from_real_time(
                     next_truth_frame_id * truth_real_interval):
                 sampling.prepare_neighbor_and_boundary(runner, solver)
@@ -362,21 +386,16 @@ while not rest_state_achieved or solver.t < target_t:
                 sample_v.write_file(
                     f'{frame_directory}/v-{next_truth_frame_id}.alu',
                     sampling.num_samples)
-                sample_density = sampling.sample_density(runner)
-                sample_density.scale(unit.to_real_density(1))
-                sample_density.write_file(
-                    f'{frame_directory}/density-{next_truth_frame_id}.alu',
-                    sampling.num_samples)
-                # visual_v2_scaled.set_from(solver.particle_cfl_v2)
-                # visual_v2_scaled.scale(unit.to_real_velocity_mse(1))
-                # visual_v2_scaled.write_file(
-                #     f'{frame_directory}/v2-{next_truth_frame_id}.alu',
-                #     solver.num_particles)
-                # visual_x_scaled.set_from(solver.particle_x)
-                # visual_x_scaled.scale(unit.to_real_length(1))
-                # visual_x_scaled.write_file(
-                #     f'{frame_directory}/x-{next_truth_frame_id}.alu',
-                #     solver.num_particles)
+                visual_v2_scaled.set_from(solver.particle_cfl_v2)
+                visual_v2_scaled.scale(unit.to_real_velocity_mse(1))
+                visual_v2_scaled.write_file(
+                    f'{frame_directory}/v2-{next_truth_frame_id}.alu',
+                    solver.num_particles)
+                visual_x_scaled.set_from(solver.particle_x)
+                visual_x_scaled.scale(unit.to_real_length(1))
+                visual_x_scaled.write_file(
+                    f'{frame_directory}/x-{next_truth_frame_id}.alu',
+                    solver.num_particles)
                 # raster_radius = unit.rl * 0.36
                 # voxel_size = raster_radius / np.sqrt(3.0)
                 # ls = alluvol.create_liquid_level_set(
@@ -388,44 +407,33 @@ while not rest_state_achieved or solver.t < target_t:
                     unit.to_real_length(1), unit.to_real_velocity(1),
                     unit.to_real_angular_velocity(1))
                 next_truth_frame_id += 1
-            if args.write_visual and solver.t >= unit.from_real_time(
+            if (args.render == 1) and solver.t >= unit.from_real_time(
                     next_visual_frame_id * visual_real_interval):
-                #framebuffer.write(f"{frame_directory}
-                pixels = np.array(framebuffer.get(), dtype=np.byte)
-                pil_image = Image.fromarray(
-                    pixels.reshape(framebuffer.height, framebuffer.width, 3),
-                    "RGB")
-                pil_image.save(
-                    f"{frame_directory}/visual-{next_visual_frame_id}.png")
-                visual_x_scaled.set_from(solver.particle_x)
-                visual_x_scaled.scale(unit.to_real_length(1))
-                visual_x_scaled.write_file(
-                    f'{frame_directory}/visual-x-{next_visual_frame_id}.alu',
-                    solver.num_particles)
-                visual_x_scaled.write_file(
-                    f'{frame_directory}/visual-pellets-{next_visual_frame_id}.alu',
-                    pile.num_pellets, solver.max_num_particles)
-                visual_v2_scaled.set_from(solver.particle_cfl_v2)
-                visual_v2_scaled.scale(unit.to_real_velocity_mse(1))
-                visual_v2_scaled.write_file(
-                    f'{frame_directory}/visual-v2-{next_visual_frame_id}.alu',
-                    solver.num_particles)
-                pile.write_file(
-                    f'{frame_directory}/visual-{next_visual_frame_id}.pile',
-                    unit.to_real_length(1), unit.to_real_velocity(1),
-                    unit.to_real_angular_velocity(1))
+                # visual_x_scaled.set_from(solver.particle_x)
+                # visual_x_scaled.scale(unit.to_real_length(1))
+                # visual_x_scaled.write_file(
+                #     f'{frame_directory}/visual-x-{next_visual_frame_id}.alu',
+                #     solver.num_particles)
+                # visual_v2_scaled.set_from(solver.particle_cfl_v2)
+                # visual_v2_scaled.scale(unit.to_real_velocity_mse(1))
+                # visual_v2_scaled.write_file(
+                #     f'{frame_directory}/visual-v2-{next_visual_frame_id}.alu',
+                #     solver.num_particles)
+                # pile.write_file(
+                #     f'{frame_directory}/visual-{next_visual_frame_id}.pile',
+                #     unit.to_real_length(1), unit.to_real_velocity(1),
+                #     unit.to_real_angular_velocity(1))
                 next_visual_frame_id += 1
             ###### move object #########
-            agitator_v_al = pile.v[agitator_id]
-            agitator_omega_al = pile.omega[agitator_id]
-            agitator_v = np.array(
-                [agitator_v_al.x, agitator_v_al.y, agitator_v_al.z],
-                dp.default_dtype)
-
-            pile.v[agitator_id] = interpolator.get_v(solver.t)
+            pile.v[agitator_id] = unit.from_real_velocity(
+                interpolator.get_v(unit.to_real_time(solver.t)))
             pile.x[agitator_id] = unit.from_real_length(
-                transform_robot_position(interpolator.get_x_real(solver.t))+shift_for_centered_agitator)
-        else:  # if not rest_state_achieved
+                interpolator.get_x(unit.to_real_time(solver.t)))
+            pile.q[agitator_id] = interpolator.get_q(
+                unit.to_real_time(solver.t))
+            pile.omega[agitator_id] = unit.from_real_angular_velocity(
+                interpolator.get_angular_velocity(unit.to_real_time(solver.t)))
+        elif not rest_state_achieved:  # if not rest_state_achieved
             v_rms = np.sqrt(
                 runner.sum(solver.particle_cfl_v2, solver.num_particles) /
                 solver.num_particles)
@@ -437,9 +445,20 @@ while not rest_state_achieved or solver.t < target_t:
                                    ) > 0.4 and unit.to_real_velocity(
                                        v_rms) < 0.015:
                 print("rest state achieved at", unit.to_real_time(solver.t))
-                solver.t = 0
                 rest_state_achieved = True
+                rest_state_achieved_time = solver.t
+        elif not additional_rest_elapsed:
+            if unit.to_real_time(solver.t - rest_state_achieved_time) > 0.6:
+                solver.t = 0
+                additional_rest_elapsed = True
         solver.step()
+        if solver.dt < 1e-8:
+            import sys
+            sys.exit(1)
+        # TODO: use grid_anomaly to terminate
+        # grid_anomaly = dp.coat(solver.grid_anomaly).get()
+        # if np.sum(grid_anomaly)>0:
+        #     print(f"Grid anomaly = {grid_anomaly}")
     print(
         f"t = {unit.to_real_time(solver.t) } dt = {unit.to_real_time(solver.dt)} cfl = {solver.utilized_cfl} vrms={unit.to_real_velocity(v_rms)} max_v={unit.to_real_velocity(np.sqrt(solver.max_v2))} num solves = {solver.num_density_solve}"
     )
@@ -447,6 +466,7 @@ while not rest_state_achieved or solver.t < target_t:
                      unit.from_real_velocity(0.01))
     dp.unmap_graphical_pointers()
     display_proxy.draw()
+np.save(f'{frame_directory}/finished.npy', 1)
 
 dp.remove(particle_normalized_attr)
 dp.remove(visual_x_scaled)
@@ -456,7 +476,7 @@ del pile
 del runner
 del dp
 
-if args.render:
+if args.render == 1:
     subprocess.Popen([
         "blender",
         "-b",
@@ -467,24 +487,22 @@ if args.render:
         "-s",
         "0",
         "-e",
-        "600",
+        "300",
         "-d",
-        f"/home/kennychufk/workspace/pythonWs/test-run-al-outside/{frame_directory}",
+        frame_directory,
         "--output-prefix",
-        "truth-agitator",
-        "--render-liquid",
+        "beads",
+        "--render-beads",
         "1",
-        "--render-glyph",
-        "0",
-        "--use-cylinder-buoy",
-        "0",
         "--render-buoy",
         "1",
-        "--render-buoy-label",
-        "0",
         "--render-agitator",
         "1",
-        "--render-beads",
-        "0",
+    ],
+                     env=os.environ.copy()).wait()
+    subprocess.Popen([
+        "/usr/bin/ffmpeg", "-r", "30", "-i", f"{frame_directory}/beads%d.png",
+        "-r", "30", "-c:v", "libx264", "-crf", "0", "-r", "30",
+        f'{args.output_dir}/rltruth-{timestamp_hash}-{timestamp_str}.mp4'
     ],
                      env=os.environ.copy()).wait()

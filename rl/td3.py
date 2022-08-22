@@ -40,6 +40,7 @@ def symmetrize_scalar_batch(s):
 
 
 def symmetrize_state_batch(state_batch):
+    # POLICY_CODEC
     return torch.hstack((symmetrize_vector_batch(state_batch[:, 0:3]),
                          symmetrize_vector_batch(state_batch[:, 3:6]),
                          symmetrize_vector_batch(state_batch[:, 6:9]),
@@ -56,6 +57,7 @@ def symmetrize_state_batch(state_batch):
 
 
 def symmetrize_action_batch(action_batch):
+    # POLICY_CODEC
     return torch.hstack((symmetrize_vector_batch(action_batch[:, 0:3]),
                          symmetrize_vector_batch(action_batch[:, 3:6]),
                          symmetrize_scalar_batch(action_batch[:, 6]),

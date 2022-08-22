@@ -421,7 +421,7 @@ class Environment:
                                             self.truth_real_interval)
         while (self.solver.t < target_t):
             self.solver.step()
-            if self.solver.t >= self.unit.from_real_time(
+            if self.save_visual and self.solver.t >= self.unit.from_real_time(
                     self.next_visual_frame_id * self.visual_real_interval):
                 self.visual_x_scaled.set_from(self.solver.particle_x,
                                               self.solver.num_particles)

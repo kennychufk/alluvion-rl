@@ -4,6 +4,7 @@ import alluvion as al
 from .quaternion import get_quat3, rotate_using_quaternion, get_quat4
 
 
+# POLICY_CODEC
 def get_state_dim():
     return 35
 
@@ -74,6 +75,7 @@ def make_state(dp, unit, kinematic_viscosity_real, buoy_v_real, buoy_v_ma0,
 
 def set_usher_param(usher, dp, unit, buoy_v_real, coil_x_real,
                     action_aggregated, num_buoys):
+    # POLICY_CODEC
     # [0:3] [3:6] [6:9] displacement from buoy x
     # xoffset_real = action_aggregated[:, 0:9].reshape(num_buoys, 3, 3)
     xoffset_real = action_aggregated[:, 0:3]

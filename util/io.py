@@ -1,5 +1,6 @@
 import numpy as np
 import struct
+from pathlib import Path
 
 
 def read_file_int(filename):
@@ -69,3 +70,12 @@ def read_pile(filename):
             if f.tell() == end_of_file:
                 break
     return np.array(xs), np.array(vs), np.array(qs), np.array(omegas)
+
+
+def get_agitator_offset(trajectory_filename, agitator_option):
+    trajectory_path = Path(trajectory_filename)
+    offset_dir = trajectory_path.parent.joinpath("offsets")
+    agitator_postfix = agitator_option.replace('/', '-')
+    offset_path = offset_dir.joinpath(
+        f'{trajectory_path.stem}.{agitator_postfix}.npy')
+    return np.load(str(offset_path))
