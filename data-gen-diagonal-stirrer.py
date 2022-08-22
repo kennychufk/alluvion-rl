@@ -16,6 +16,7 @@ parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--output-dir', type=str, default='.')
 parser.add_argument('--render', type=int, default=0)
 parser.add_argument('--shape-dir', type=str, required=True)
+parser.add_argument('--display', type=int, default=0)
 args = parser.parse_args()
 import random
 
@@ -24,8 +25,10 @@ np.random.seed(seed)
 dp = al.Depot(np.float32)
 cn = dp.cn
 cni = dp.cni
-dp.create_display(800, 600, "alluvion-fixed", False)
-display_proxy = dp.get_display_proxy()
+display = (args.display == 1)
+if display:
+    dp.create_display(800, 600, "alluvion-fixed", False)
+    display_proxy = dp.get_display_proxy()
 runner = dp.Runner()
 
 particle_radius = 0.25
@@ -292,8 +295,10 @@ solver = dp.SolverI(runner,
                     num_particles,
                     enable_surface_tension=False,
                     enable_vorticity=False,
-                    graphical=True)
-particle_normalized_attr = dp.create_graphical_like(solver.particle_density)
+                    graphical=display)
+if display:
+    particle_normalized_attr = dp.create_graphical_like(
+        solver.particle_density)
 
 solver.num_particles = num_particles
 solver.max_dt = unit.from_real_time(0.00025)
@@ -318,18 +323,19 @@ dp.remove(reference_bead_x)
 dp.remove(reference_bead_v)
 dp.unmap_graphical_pointers()
 
-display_proxy.set_camera(unit.from_real_length(al.float3(0, 0.6, 0.6)),
-                         unit.from_real_length(al.float3(0, -0.02, 0)))
-display_proxy.set_clip_planes(unit.to_real_length(1),
-                              container_distance.aabb_max.z * 20)
-colormap_tex = display_proxy.create_colormap_viridis()
+if display:
+    display_proxy.set_camera(unit.from_real_length(al.float3(0, 0.6, 0.6)),
+                             unit.from_real_length(al.float3(0, -0.02, 0)))
+    display_proxy.set_clip_planes(unit.to_real_length(1),
+                                  container_distance.aabb_max.z * 20)
+    colormap_tex = display_proxy.create_colormap_viridis()
 
-display_proxy.add_particle_shading_program(solver.particle_x,
-                                           particle_normalized_attr,
-                                           colormap_tex,
-                                           solver.particle_radius, solver)
-display_proxy.add_pile_shading_program(pile)
-display_proxy.resize(800, 600)
+    display_proxy.add_particle_shading_program(solver.particle_x,
+                                               particle_normalized_attr,
+                                               colormap_tex,
+                                               solver.particle_radius, solver)
+    display_proxy.add_pile_shading_program(pile)
+    display_proxy.resize(800, 600)
 
 timestamp_str, timestamp_hash = get_timestamp_and_hash()
 frame_directory = f'{args.output_dir}/rltruth-{timestamp_hash}-{timestamp_str}'
@@ -462,13 +468,16 @@ while not rest_state_achieved or not additional_rest_elapsed or solver.t < targe
     print(
         f"t = {unit.to_real_time(solver.t) } dt = {unit.to_real_time(solver.dt)} cfl = {solver.utilized_cfl} vrms={unit.to_real_velocity(v_rms)} max_v={unit.to_real_velocity(np.sqrt(solver.max_v2))} num solves = {solver.num_density_solve}"
     )
-    solver.normalize(solver.particle_v, particle_normalized_attr, 0,
-                     unit.from_real_velocity(0.01))
+    if display:
+        solver.normalize(solver.particle_v, particle_normalized_attr, 0,
+                         unit.from_real_velocity(0.01))
     dp.unmap_graphical_pointers()
-    display_proxy.draw()
+    if display:
+        display_proxy.draw()
 np.save(f'{frame_directory}/finished.npy', 1)
 
-dp.remove(particle_normalized_attr)
+if display:
+    dp.remove(particle_normalized_attr)
 dp.remove(visual_x_scaled)
 dp.remove(visual_v2_scaled)
 del solver
