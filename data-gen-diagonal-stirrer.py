@@ -84,8 +84,8 @@ agitator_option = agitator_options[np.random.randint(
 agitator_model_dir = f'{args.shape_dir}/{agitator_option}/models'
 agitator_mesh_filename = f'{agitator_model_dir}/manifold2-decimate-2to-8.obj'
 
-container_pellet_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/cube24-2to-8.alu'
-buoy_pellet_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/buoy-2to-8.alu'
+container_pellet_filename = f'{args.shape_dir}/cube24/cube24/models/cube24-2to-8.alu'
+buoy_pellet_filename = f'{args.shape_dir}/buoy/buoy/models/buoy-2to-8.alu'
 agitator_pellet_filename = f'{agitator_model_dir}/manifold2-decimate-2to-8.alu'
 
 num_buoys = np.random.randint(low=4, high=101)
@@ -196,13 +196,13 @@ agitator_id = pile.add_pellets(agitator_distance,
                                inertia_tensor=agitator_inertia,
                                display_mesh=agitator_mesh)
 trajectory_options = [
-    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660827696187835-circular.npy",
-    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660981184729619-eight.npy",  # not useful
-    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660981300661176-horiloop.npy",
-    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660981516677005-pendulum.npy",
-    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660981564777114-vigorous-calm.npy",
-    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1660981624648440-z.npy",
-    "/home/kennychufk/workspace/pythonWs/trajectory-al/leap/motion-1661086716905043-o.npy",
+    f"{args.shape_dir}/leap/motion-1660827696187835-circular.npy",
+    f"{args.shape_dir}/leap/motion-1660981184729619-eight.npy",  # not useful
+    f"{args.shape_dir}/leap/motion-1660981300661176-horiloop.npy",
+    f"{args.shape_dir}/leap/motion-1660981516677005-pendulum.npy",
+    f"{args.shape_dir}/leap/motion-1660981564777114-vigorous-calm.npy",
+    f"{args.shape_dir}/leap/motion-1660981624648440-z.npy",
+    f"{args.shape_dir}/leap/motion-1661086716905043-o.npy",
 ]
 
 trajectory_option = trajectory_options[np.random.randint(
@@ -225,8 +225,8 @@ pile.reallocate_kinematics_on_device()
 pile.set_gravity(gravity)
 cn.contact_tolerance = particle_radius * 2
 
-reference_bead_x_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/sorted-bead-x-2to-8.alu'
-reference_bead_v_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/sorted-bead-v-2to-8.alu'
+reference_bead_x_filename = f'{args.shape_dir}/beads/sorted-bead-x-2to-8.alu'
+reference_bead_v_filename = f'{args.shape_dir}/beads/sorted-bead-v-2to-8.alu'
 num_positions = dp.get_alu_info(reference_bead_x_filename)[0][0]
 reference_bead_x = dp.create((num_positions), 3)
 reference_bead_x.read_file(reference_bead_x_filename)
@@ -489,9 +489,11 @@ if args.render == 1:
     subprocess.Popen([
         "blender",
         "-b",
-        "/home/kennychufk/workspace/blenderWs/alluvion-film/liquid-glyph-cycle-new.blend",
+        str(Path.home().joinpath(
+            "workspace/blenderWs/alluvion-film/liquid-glyph-cycle-new.blend")),
         "--python",
-        "/home/kennychufk/workspace/blenderWs/alluvion-film/glyph-vis.py",
+        str(Path.home().joinpath(
+            "workspace/blenderWs/alluvion-film/glyph-vis.py")),
         "--",
         "-s",
         "0",
