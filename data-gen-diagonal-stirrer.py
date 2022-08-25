@@ -458,15 +458,17 @@ while not rest_state_achieved or not additional_rest_elapsed or solver.t < targe
                 solver.t = 0
                 additional_rest_elapsed = True
         solver.step()
-        if solver.dt < 1e-8:
+        if solver.dt < 1e-7 or (not rest_state_achieved
+                                and unit.to_real_time(solver.t) > 5):
             import sys
             sys.exit(1)
         # TODO: use grid_anomaly to terminate
         # grid_anomaly = dp.coat(solver.grid_anomaly).get()
         # if np.sum(grid_anomaly)>0:
         #     print(f"Grid anomaly = {grid_anomaly}")
+    vigorous_indicator = '' if rest_state_achieved else 'VIG '
     print(
-        f"t = {unit.to_real_time(solver.t) } dt = {unit.to_real_time(solver.dt)} cfl = {solver.utilized_cfl} vrms={unit.to_real_velocity(v_rms)} max_v={unit.to_real_velocity(np.sqrt(solver.max_v2))} num solves = {solver.num_density_solve}"
+        f"{vigorous_indicator}t = {unit.to_real_time(solver.t) } dt = {unit.to_real_time(solver.dt)} cfl = {solver.utilized_cfl} vrms={unit.to_real_velocity(v_rms)} max_v={unit.to_real_velocity(np.sqrt(solver.max_v2))} num solves = {solver.num_density_solve}"
     )
     if display:
         solver.normalize(solver.particle_v, particle_normalized_attr, 0,
