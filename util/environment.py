@@ -201,7 +201,7 @@ class Environment:
         self.truth_real_freq = 100.0
         self.truth_real_interval = 1.0 / self.truth_real_freq
 
-        self.visual_real_interval = 1.0 / 30.0
+        self.visual_real_interval = 1.0 / 100.0
         self.next_visual_frame_id = 0
         if self.save_visual:
             self.visual_x_scaled = self.dp.create_coated_like(
@@ -428,10 +428,10 @@ class Environment:
                 self.visual_x_scaled.scale(self.unit.to_real_length(1))
                 if self.save_dir_visual is not None:
                     self.visual_x_scaled.write_file(
-                        f'{str(self.save_dir_visual)}/visual-x-{self.next_visual_frame_id}.alu',
+                        f'{str(self.save_dir_visual)}/x-{self.next_visual_frame_id}.alu',
                         self.solver.num_particles)
                     self.pile.write_file(
-                        f'{str(self.save_dir_visual)}/visual-{self.next_visual_frame_id}.pile',
+                        f'{str(self.save_dir_visual)}/{self.next_visual_frame_id}.pile',
                         self.unit.to_real_length(1),
                         self.unit.to_real_velocity(1),
                         self.unit.to_real_angular_velocity(1))

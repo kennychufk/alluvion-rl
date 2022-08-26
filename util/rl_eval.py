@@ -6,7 +6,12 @@ from .timestamp import get_timestamp_and_hash
 from .policy_codec import get_action_dim, get_state_dim
 
 
-def eval_agent(eval_env, agent, result_dict, report_state_action=False):
+def eval_agent(eval_env,
+               agent,
+               result_dict,
+               report_state_action=False,
+               run_id=None,
+               model_iteration=None):
     timestamp_str, timestamp_hash = get_timestamp_and_hash()
 
     all_episodes_error_accm = 0.
@@ -30,7 +35,9 @@ def eval_agent(eval_env, agent, result_dict, report_state_action=False):
             cursor = 0
         dirname_short = Path(eval_env.truth_dir).name[4:15]
         if report_state_action or eval_env.save_visual:
-            report_save_dir = Path(f'val-{dirname_short}-{timestamp_hash}')
+            report_save_dir = Path(
+                f'val-{dirname_short}-{run_id}-{model_iteration}-{timestamp_hash}'
+            )
             report_save_dir.mkdir(parents=True)
             if eval_env.save_visual:
                 eval_env.save_dir_visual = report_save_dir

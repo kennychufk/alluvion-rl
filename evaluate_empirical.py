@@ -39,20 +39,18 @@ agent = TD3(actor_lr=config['actor_lr'],
             batch_size=config['batch_size'])
 
 val_dirs = [
-    f"{args.truth_dir}/rltruth-be268318-0526.07.32.30/",
-    f"{args.truth_dir}/rltruth-5caefe43-0526.14.46.12/",
-    f"{args.truth_dir}/rltruth-e8edf09d-0526.18.34.19/",
-    f"{args.truth_dir}/rltruth-6de1d91b-0526.09.31.47/",
-    f"{args.truth_dir}/rltruth-3b860b54-0526.23.12.15/",
-    f"{args.truth_dir}/rltruth-eb3494c1-0527.00.32.34/",
-    f"{args.truth_dir}/rltruth-e9ba71d8-0527.01.52.31/"
+    # f"{args.truth_dir}/diagonal-val/rltruth-a1ee9cd0-0626.12.16.43", # 48
+    # f"{args.truth_dir}/diagonal-val/rltruth-b3b1d0c6-0627.20.16.18", # 8
+    f"{args.truth_dir}/diagonal-val/rltruth-317262ac-0627.22.17.59",  # 98
 ]
 
 # eval_env = Environment(dp,
 #                        truth_dirs=val_dirs,
 #                        cache_dir=args.cache_dir,
 #                        ma_alphas=config['ma_alphas'],
-#                        display=args.display)
+#                        display=args.display,
+#                        save_visual=True)
+
 piv_truth_dirs = [
     '/media/kennychufk/vol1bk0/20210415_162749-laser-too-high/',
     '/media/kennychufk/vol1bk0/20210415_164304/',
@@ -103,4 +101,15 @@ else:
     agent.load_models(
         f'artifacts/{args.run_id}/models/{args.model_iteration}/')
     result_dict = {}
-    eval_agent(env_piv, agent, result_dict, report_state_action=True)
+    eval_agent(env_piv,
+               agent,
+               result_dict,
+               report_state_action=True,
+               run_id=args.run_id,
+               model_iteration=args.model_iteration)
+    # eval_agent(eval_env,
+    #            agent,
+    #            result_dict,
+    #            report_state_action=True,
+    #            run_id=args.run_id,
+    #            model_iteration=args.model_iteration)
