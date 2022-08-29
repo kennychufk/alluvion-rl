@@ -47,13 +47,23 @@ def symmetrize_state_batch(state_batch):
                          symmetrize_vector_batch(state_batch[:, 9:12]),
                          symmetrize_vector_batch(state_batch[:, 12:15]),
                          symmetrize_quat3_batch(state_batch[:, 15:18]),
+
                          symmetrize_vector_batch(state_batch[:, 18:21]),
                          symmetrize_vector_batch(state_batch[:, 21:24]),
                          symmetrize_vector_batch(state_batch[:, 24:27]),
                          symmetrize_vector_batch(state_batch[:, 27:30]),
                          symmetrize_vector_batch(state_batch[:, 30:33]),
-                         symmetrize_scalar_batch(state_batch[:, 33]),
-                         symmetrize_scalar_batch(state_batch[:, 34])))
+                         symmetrize_vector_batch(state_batch[:, 33:36]),
+                         symmetrize_vector_batch(state_batch[:, 36:39]),
+                         symmetrize_vector_batch(state_batch[:, 39:42]),
+                         symmetrize_vector_batch(state_batch[:, 42:45]),
+                         symmetrize_vector_batch(state_batch[:, 45:48]),
+                         symmetrize_vector_batch(state_batch[:, 48:51]),
+                         symmetrize_vector_batch(state_batch[:, 51:54]),
+
+                         symmetrize_vector_batch(state_batch[:, 54:57]),
+                         symmetrize_scalar_batch(state_batch[:, 57]),
+                         symmetrize_scalar_batch(state_batch[:, 58])))
 
 
 def symmetrize_action_batch(action_batch):

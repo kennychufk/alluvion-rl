@@ -6,7 +6,7 @@ from .quaternion import get_quat3, rotate_using_quaternion, get_quat4
 
 # POLICY_CODEC
 def get_state_dim():
-    return 35
+    return 59
 
 
 def get_action_dim():
@@ -57,10 +57,30 @@ def make_state(dp, unit, kinematic_viscosity_real, buoy_v_real, buoy_v_ma0,
                 buoy_v_ma2[buoy_id],
                 buoy_v_ma3[buoy_id],
                 buoy_q3[buoy_id],
-                xij[dist_sort_index[0]],
-                vi - buoy_v_real[dist_sort_index[0]],
-                xij[dist_sort_index[1]],
-                vi - buoy_v_real[dist_sort_index[1]],
+                xij[dist_sort_index[0]]
+                if 0 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                vi - buoy_v_real[dist_sort_index[0]]
+                if 0 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                xij[dist_sort_index[1]]
+                if 1 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                vi - buoy_v_real[dist_sort_index[1]]
+                if 1 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                xij[dist_sort_index[2]]
+                if 2 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                vi - buoy_v_real[dist_sort_index[2]]
+                if 2 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                xij[dist_sort_index[3]]
+                if 3 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                vi - buoy_v_real[dist_sort_index[3]]
+                if 3 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                xij[dist_sort_index[4]]
+                if 4 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                vi - buoy_v_real[dist_sort_index[4]]
+                if 4 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                xij[dist_sort_index[5]]
+                if 5 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                vi - buoy_v_real[dist_sort_index[5]]
+                if 5 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
                 sample_v_real[buoy_id].flatten(),
                 sample_density_relative[buoy_id],
                 # sample_vort_real[buoy_id].flatten(),
