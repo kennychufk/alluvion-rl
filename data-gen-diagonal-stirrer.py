@@ -5,6 +5,7 @@ import time
 import numpy as np
 import subprocess
 import os
+import yaml
 from scipy.spatial.transform import Rotation as R
 
 import alluvion as al
@@ -39,17 +40,10 @@ volume_relative_to_cube = 0.8
 particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
+with open(f"{args.output_dir}/profile.yaml") as f:
+    profile = yaml.safe_load(f)
 
-fluid_property_options = [
-    [1156.2, 21.9e-3],  #GWM
-    [997.28, 1.03e-3],  #water
-    [1195.48, 2.74e-3],  #salt water
-    [800, 2.168e-3],  # kerosene
-    [
-        1142, 8.365e-3
-    ],  # 50% GWM (by V) # http://www.met.reading.ac.uk/~sws04cdw/viscosity_calc.html
-    [988.05, 0.5474e-3],  #water at 50 celcius
-]
+fluid_property_options = profile["fluid_property_options"]
 
 density0_real, dynamic_viscosity_real = fluid_property_options[
     np.random.randint(low=0, high=len(fluid_property_options))]
@@ -68,16 +62,7 @@ cn.viscosity, cn.boundary_viscosity = unit.from_real_kinematic_viscosity(
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
-# agitator_option = 'stirrer/stirrer'
-agitator_options = [
-    'bunny/bunny',
-    '03797390/ec846432f3ebedf0a6f32a8797e3b9e9',
-    '03046257/757fd88d3ddca2403406473757712946',
-    '02942699/9db4b2c19c858a36eb34db531a289b8e',
-    '03261776/1d4f9c324d6388a9b904f4192b538029',
-    '03325088/daa26435e1603392b7a867e9b35a1295',
-    '03513137/91c0193d38f0c5338c9affdacaf55648',
-]
+agitator_options = profile['agitator_options']
 agitator_option = agitator_options[np.random.randint(
     low=0, high=len(agitator_options))]
 
@@ -166,7 +151,6 @@ pile.hint_identical_sequence(1, pile.get_size())
 
 agitator_mesh = al.Mesh()
 
-print(agitator_mesh_filename)
 print(Path(agitator_mesh_filename).is_file())
 agitator_mesh.set_obj(agitator_mesh_filename)
 agitator_density_real = 1000
@@ -195,22 +179,18 @@ agitator_id = pile.add_pellets(agitator_distance,
                                friction=0.3,
                                inertia_tensor=agitator_inertia,
                                display_mesh=agitator_mesh)
-trajectory_options = [
-    f"{args.shape_dir}/leap/motion-1660827696187835-circular.npy",
-    f"{args.shape_dir}/leap/motion-1660981184729619-eight.npy",  # not useful
-    f"{args.shape_dir}/leap/motion-1660981300661176-horiloop.npy",
-    f"{args.shape_dir}/leap/motion-1660981516677005-pendulum.npy",
-    f"{args.shape_dir}/leap/motion-1660981564777114-vigorous-calm.npy",
-    f"{args.shape_dir}/leap/motion-1660981624648440-z.npy",
-    f"{args.shape_dir}/leap/motion-1661086716905043-o.npy",
-]
+trajectory_options = profile["trajectory_options"]
 
 trajectory_option = trajectory_options[np.random.randint(
     low=0, high=len(trajectory_options))]
+trajectory_option = f'{args.shape_dir}/{trajectory_option}'
 
 agitator_offset = get_agitator_offset(trajectory_option, agitator_option)
 
-interpolator = LeapInterpolator(dp, trajectory_option, agitator_offset)
+interpolator = LeapInterpolator(dp,
+                                trajectory_option,
+                                b_spline_knots=profile["b_spline_knots"],
+                                offset=agitator_offset)
 pile.x[agitator_id] = unit.from_real_length(interpolator.get_x(0))
 pile.q[agitator_id] = interpolator.get_q(0)
 dp.remove(agitator_pellet_x)
@@ -235,14 +215,7 @@ reference_bead_v.read_file(reference_bead_v_filename)
 internal_encoded = dp.create_coated((num_positions), 1, np.uint32)
 max_fill_num_particles = pile.compute_sort_custom_beads_internal_all(
     internal_encoded, reference_bead_x)
-fluid_mass_options = [
-    2.75,
-    3.0,
-    3.25,  # GWM experiments
-    3.5,
-    3.75,
-    4,
-]
+fluid_mass_options = profile["fluid_mass_options"]
 fluid_mass = fluid_mass_options[np.random.randint(
     low=0, high=len(fluid_mass_options))]
 num_particles = int(fluid_mass / unit.to_real_mass(particle_mass))
