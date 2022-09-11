@@ -196,7 +196,8 @@ class Environment:
         self.simulation_sampling = None
         self.ground_truth_v = None
         self.v_zero = None
-        self.mask = None
+        self.weight = None
+        self.weight_zero = None
 
         self.truth_real_freq = 100.0
         self.truth_real_interval = 1.0 / self.truth_real_freq
@@ -246,16 +247,20 @@ class Environment:
             self.dp.remove(self.ground_truth_v)
         if self.v_zero is not None:
             self.dp.remove(self.v_zero)
-        if self.mask is not None:
-            self.dp.remove(self.mask)
+        if self.weight is not None:
+            self.dp.remove(self.weight)
+        if self.weight_zero is not None:
+            self.dp.remove(self.weight_zero)
         self.simulation_sampling = self.get_simulation_sampling(self.truth_dir)
         self.ground_truth_v = self.dp.create_coated_like(
             self.simulation_sampling.sample_data3)
         self.v_zero = self.dp.create_coated_like(
             self.simulation_sampling.sample_data3)
         self.v_zero.set_zero()
-        self.mask = self.dp.create_coated(
-            (self.simulation_sampling.num_samples), 1, np.uint32)
+        self.weight = self.dp.create_coated(
+            (self.simulation_sampling.num_samples), 1)
+        self.weight_zero = self.dp.create_coated_like(self.weight)
+        self.weight_zero.set_zero()
 
     def reset_buoy_interpolators(self):
         marker_dtype = np.dtype([('t', np.float32), ('x', np.float32, 3),
@@ -389,22 +394,25 @@ class Environment:
         simulation_v_real = self.simulation_sampling.sample_velocity(
             self.runner, self.solver)
         simulation_v_real.scale(self.unit.to_real_velocity(1))
+        simulation_density_weight = self.simulation_sampling.sample_fluid_density(
+            self.runner)
 
         self.ground_truth_v.read_file(
             f'{self.truth_dir}/v-{episode_t-self._reward_delay}.alu')
-        self.mask.read_file(
-            f'{self.truth_dir}/mask-{episode_t-self._reward_delay}.alu')
-        v_error = self.runner.calculate_se_masked(
-            simulation_v_real, self.ground_truth_v, self.mask,
-            self.simulation_sampling.num_samples)
-        truth_sqr = self.runner.calculate_se_masked(
-            self.v_zero, self.ground_truth_v, self.mask,
+        self.weight.read_file(
+            f'{self.truth_dir}/density-weight-{episode_t-self._reward_delay}.alu'
+        )
+        v_error = self.runner.calculate_se_weighted(
+            simulation_v_real, self.ground_truth_v, simulation_density_weight,
+            self.weight, self.simulation_sampling.num_samples)
+        truth_sqr = self.runner.calculate_se_weighted(
+            self.v_zero, self.ground_truth_v, self.weight_zero, self.weight,
             self.simulation_sampling.num_samples)
         result_obj = {}
         result_obj['v_error'] = v_error
         result_obj['truth_sqr'] = truth_sqr
         result_obj['num_masked'] = self.runner.sum(
-            self.mask, self.simulation_sampling.num_samples)
+            self.weight, self.simulation_sampling.num_samples)
 
         return -v_error / result_obj['num_masked'], result_obj
 
