@@ -72,6 +72,15 @@ def read_pile(filename):
     return np.array(xs), np.array(vs), np.array(qs), np.array(omegas)
 
 
+def write_pile(filename, xs, vs, qs, omegas):
+    with open(filename, 'wb') as f:
+        for rigid_id in range(len(xs)):
+            f.write(xs[rigid_id].tobytes())
+            f.write(vs[rigid_id].tobytes())
+            f.write(qs[rigid_id].tobytes())
+            f.write(omegas[rigid_id].tobytes())
+
+
 def get_agitator_offset(trajectory_filename, agitator_option):
     trajectory_path = Path(trajectory_filename)
     offset_dir = trajectory_path.parent.joinpath("offsets")
