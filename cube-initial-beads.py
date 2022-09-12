@@ -14,6 +14,10 @@ from util import Unit, FluidSamplePellets, get_timestamp_and_hash, BuoySpec, par
 
 parser = argparse.ArgumentParser(description='Initial bead generator')
 parser.add_argument('--existing', type=str, default='')
+parser.add_argument('--kernel-radius', type=float, default=0.015625)
+parser.add_argument('--density0', type=float, default=1000)
+parser.add_argument('--fluid-mass', type=float, required=True)
+parser.add_argument('--cache-dir', type=str, default='cache')
 args = parser.parse_args()
 dp = al.Depot(np.float32)
 cn = dp.cn
@@ -32,8 +36,9 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
 
-density0_real = 1000
-unit = Unit(real_kernel_radius=2**-8,
+density0_real = args.density0
+real_kernel_radius = args.kernel_radius
+unit = Unit(real_kernel_radius=real_kernel_radius,
             real_density0=density0_real,
             real_gravity=-9.80665)
 
@@ -49,7 +54,7 @@ print('parameterized nu',
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
-container_pellet_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/cube24-2to-8.alu'
+container_pellet_filename = f'/home/kennychufk/workspace/pythonWs/alluvion-optim/cube24-{real_kernel_radius}.alu'
 
 container_num_pellets = dp.get_alu_info(container_pellet_filename)[0][0]
 num_pellets = container_num_pellets
@@ -106,7 +111,7 @@ if not use_existing:
         box_max=container_distance.aabb_max,
         particle_radius=particle_radius,
         mode=fluid_block_mode)
-num_particles = 125000
+num_particles = int(args.fluid_mass / unit.to_real_mass(particle_mass))
 
 print('num_particles', num_particles)
 
@@ -168,7 +173,9 @@ display_proxy.add_pile_shading_program(pile)
 display_proxy.add_show_framebuffer_shader(framebuffer)
 display_proxy.resize(800, 600)
 
-while True:
+with open('switch', 'w') as f:
+    f.write('1')
+while True and unit.to_real_time(solver.t) < 60:
     with open('switch') as f:
         switch_result = int(f.read())
         if switch_result == 0:
@@ -188,10 +195,15 @@ while True:
     display_proxy.draw()
 
 dp.map_graphical_pointers()
-solver.particle_x.write_file("initial_bead_x-2to-8.alu", solver.num_particles)
-solver.particle_v.write_file("initial_bead_v-2to-8.alu", solver.num_particles)
-solver.particle_pressure.write_file("initial_bead_p-2to-8.alu",
-                                    solver.num_particles)
+solver.particle_x.write_file(
+    f"{args.cache_dir}/playground_bead_x-{real_kernel_radius}-{density0_real}-{args.fluid_mass}.alu",
+    solver.num_particles)
+solver.particle_v.write_file(
+    f"{args.cache_dir}/playground_bead_v-{real_kernel_radius}-{density0_real}-{args.fluid_mass}.alu",
+    solver.num_particles)
+solver.particle_pressure.write_file(
+    f"{args.cache_dir}/playground_bead_p-{real_kernel_radius}-{density0_real}-{args.fluid_mass}.alu",
+    solver.num_particles)
 dp.unmap_graphical_pointers()
 
 dp.remove(particle_normalized_attr)

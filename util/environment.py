@@ -53,13 +53,8 @@ class Environment:
     def init_real_kernel_radius(self):
         self.real_kernel_radius = 2**-6
 
-    def init_particle_files(self):
-        self.initial_particle_x_filename = f'{self.cache_dir}/playground_bead_x-2to-6.alu'
-        self.initial_particle_v_filename = f'{self.cache_dir}/playground_bead_v-2to-6.alu'
-        self.initial_particle_pressure_filename = f'{self.cache_dir}/playground_bead_p-2to-6.alu'
-
     def init_container_pellet_file(self):
-        self.container_pellet_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/cube24-2to-6.alu'
+        self.container_pellet_filename = f'{self.cache_dir}/cube24-{self.real_kernel_radius}.alu'
 
     def __init__(self,
                  dp,
@@ -81,7 +76,6 @@ class Environment:
         self.save_visual = save_visual
 
         # === constants
-        self.init_particle_files()
         self.init_real_kernel_radius()
         self.init_container_pellet_file()
         particle_radius = 0.25
@@ -197,7 +191,6 @@ class Environment:
         self.ground_truth_v = None
         self.v_zero = None
         self.weight = None
-        self.weight_zero = None
 
         self.truth_real_freq = 100.0
         self.truth_real_interval = 1.0 / self.truth_real_freq
@@ -249,8 +242,6 @@ class Environment:
             self.dp.remove(self.v_zero)
         if self.weight is not None:
             self.dp.remove(self.weight)
-        if self.weight_zero is not None:
-            self.dp.remove(self.weight_zero)
         self.simulation_sampling = self.get_simulation_sampling(self.truth_dir)
         self.ground_truth_v = self.dp.create_coated_like(
             self.simulation_sampling.sample_data3)
@@ -259,8 +250,6 @@ class Environment:
         self.v_zero.set_zero()
         self.weight = self.dp.create_coated(
             (self.simulation_sampling.num_samples), 1)
-        self.weight_zero = self.dp.create_coated_like(self.weight)
-        self.weight_zero.set_zero()
 
     def reset_buoy_interpolators(self):
         marker_dtype = np.dtype([('t', np.float32), ('x', np.float32, 3),
@@ -304,9 +293,10 @@ class Environment:
                 parameterize_kinematic_viscosity(
                     self.kinematic_viscosity_real))
 
-        fluid_mass = self.unit.from_real_mass(
-            np.load(f'{self.truth_dir}/fluid_mass.npy').item())
-        num_particles = int(fluid_mass / self.cn.particle_mass)
+        self.real_fluid_mass = np.load(
+            f'{self.truth_dir}/fluid_mass.npy').item()
+        self.fluid_mass = self.unit.from_real_mass(self.real_fluid_mass)
+        num_particles = int(self.fluid_mass / self.cn.particle_mass)
         self.solver.num_particles = num_particles
 
         self.solver.usher.reset()
@@ -314,7 +304,13 @@ class Environment:
         print('num_particles', num_particles, 'self.num_buoys', self.num_buoys)
 
     def reset_solver_initial(self):
+        postfix = f"-{self.real_kernel_radius}-{self.unit.rdensity0}-{self.real_fluid_mass}.alu"
+        self.initial_particle_x_filename = f'{self.cache_dir}/playground_bead_x{postfix}'
+        self.initial_particle_v_filename = f'{self.cache_dir}/playground_bead_v{postfix}'
+        self.initial_particle_pressure_filename = f'{self.cache_dir}/playground_bead_p{postfix}'
+
         self.dp.map_graphical_pointers()
+        print(self.initial_particle_x_filename)
         self.solver.particle_x.read_file(self.initial_particle_x_filename)
         self.solver.particle_v.read_file(self.initial_particle_v_filename)
         self.solver.particle_pressure.read_file(
@@ -473,13 +469,8 @@ class EnvironmentPIV(Environment):
     def init_real_kernel_radius(self):
         self.real_kernel_radius = 0.011
 
-    def init_particle_files(self):
-        self.initial_particle_x_filename = f'{self.cache_dir}/playground_bead_x-0.011.alu'
-        self.initial_particle_v_filename = f'{self.cache_dir}/playground_bead_v-0.011.alu'
-        self.initial_particle_pressure_filename = f'{self.cache_dir}/playground_bead_p-0.011.alu'
-
     def init_container_pellet_file(self):
-        self.container_pellet_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/cube24-0.011.alu'
+        self.container_pellet_filename = f'{self.cache_dir}/cube24-0.011.alu'
 
     def get_num_buoys(self, truth_dir):
         return len(np.load(f'{truth_dir}/rec/marker_ids.npy'))
@@ -520,7 +511,7 @@ class EnvironmentPIV(Environment):
         super().reset_vectors()
         self.mask_collection = np.load(
             f'{self.truth_dir}/mat_results/mask-at0.0424264.npy').reshape(
-                -1, self.simulation_sampling.num_samples)
+                -1, self.simulation_sampling.num_samples).astype(np.float32)
 
         truth_v_piv = np.load(
             f'{self.truth_dir}/mat_results/vel_original.npy').reshape(
@@ -584,12 +575,12 @@ class EnvironmentPIV(Environment):
 
         self.ground_truth_v.set(self.truth_v_collection[episode_t -
                                                         self._reward_delay])
-        self.mask.set(self.mask_collection[episode_t - self._reward_delay])
-        v_error = self.runner.calculate_se_yz_masked(
-            simulation_v_real, self.ground_truth_v, self.mask,
+        self.weight.set(self.mask_collection[episode_t - self._reward_delay])
+        v_error = self.runner.calculate_se_yz_weighted(
+            simulation_v_real, self.ground_truth_v, self.weight,
             self.simulation_sampling.num_samples)
-        truth_sqr = self.runner.calculate_se_yz_masked(
-            self.v_zero, self.ground_truth_v, self.mask,
+        truth_sqr = self.runner.calculate_se_yz_weighted(
+            self.v_zero, self.ground_truth_v, self.weight,
             self.simulation_sampling.num_samples)
         result_obj = {}
         result_obj['v_error'] = v_error
