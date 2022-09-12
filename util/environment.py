@@ -394,8 +394,6 @@ class Environment:
         simulation_v_real = self.simulation_sampling.sample_velocity(
             self.runner, self.solver)
         simulation_v_real.scale(self.unit.to_real_velocity(1))
-        simulation_density_weight = self.simulation_sampling.sample_fluid_density(
-            self.runner)
 
         self.ground_truth_v.read_file(
             f'{self.truth_dir}/v-{episode_t-self._reward_delay}.alu')
@@ -403,10 +401,10 @@ class Environment:
             f'{self.truth_dir}/density-weight-{episode_t-self._reward_delay}.alu'
         )
         v_error = self.runner.calculate_se_weighted(
-            simulation_v_real, self.ground_truth_v, simulation_density_weight,
-            self.weight, self.simulation_sampling.num_samples)
+            simulation_v_real, self.ground_truth_v, self.weight,
+            self.simulation_sampling.num_samples)
         truth_sqr = self.runner.calculate_se_weighted(
-            self.v_zero, self.ground_truth_v, self.weight_zero, self.weight,
+            self.v_zero, self.ground_truth_v, self.weight,
             self.simulation_sampling.num_samples)
         result_obj = {}
         result_obj['v_error'] = v_error
