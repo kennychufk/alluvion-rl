@@ -107,6 +107,37 @@ pile.add_pellets(container_distance,
 dp.remove(container_pellet_x)
 ## ================== using cube
 
+## ======== internal sample points
+pile.reallocate_kinematics_on_device()
+sample_x_fill_mode = 0
+sample_radius = kernel_radius
+num_sample_positions = dp.Runner.get_fluid_block_num_particles(
+    mode=sample_x_fill_mode,
+    box_min=container_distance.aabb_min,
+    box_max=container_distance.aabb_max,
+    particle_radius=sample_radius)
+sample_internal_encoded = dp.create_coated((num_sample_positions), 1,
+                                           np.uint32)
+num_samples = pile.compute_sort_fluid_block_internal_all(
+    sample_internal_encoded,
+    box_min=container_distance.aabb_min,
+    box_max=container_distance.aabb_max,
+    particle_radius=sample_radius,
+    mode=sample_x_fill_mode)
+print('num_samples', num_samples)
+sampling = FluidSamplePellets(dp, np.zeros((num_samples, 3), dp.default_dtype),
+                              dp.cni)
+runner.launch_create_fluid_block_internal(sampling.sample_x,
+                                          sample_internal_encoded,
+                                          num_samples,
+                                          offset=0,
+                                          particle_radius=sample_radius,
+                                          mode=sample_x_fill_mode,
+                                          box_min=container_distance.aabb_min,
+                                          box_max=container_distance.aabb_max)
+dp.remove(sample_internal_encoded)
+## ======== end of internal sample points
+
 buoy = BuoySpec(dp, unit)
 
 
@@ -220,36 +251,6 @@ fluid_mass = fluid_mass_options[np.random.randint(
     low=0, high=len(fluid_mass_options))]
 num_particles = int(fluid_mass / unit.to_real_mass(particle_mass))
 print('num_particles', num_particles)
-
-## ======== internal sample points
-sample_x_fill_mode = 0
-sample_radius = kernel_radius
-num_sample_positions = dp.Runner.get_fluid_block_num_particles(
-    mode=sample_x_fill_mode,
-    box_min=container_distance.aabb_min,
-    box_max=container_distance.aabb_max,
-    particle_radius=sample_radius)
-sample_internal_encoded = dp.create_coated((num_sample_positions), 1,
-                                           np.uint32)
-num_samples = pile.compute_sort_fluid_block_internal_all(
-    sample_internal_encoded,
-    box_min=container_distance.aabb_min,
-    box_max=container_distance.aabb_max,
-    particle_radius=sample_radius,
-    mode=sample_x_fill_mode)
-print('num_samples', num_samples)
-sampling = FluidSamplePellets(dp, np.zeros((num_samples, 3), dp.default_dtype),
-                              dp.cni)
-runner.launch_create_fluid_block_internal(sampling.sample_x,
-                                          sample_internal_encoded,
-                                          num_samples,
-                                          offset=0,
-                                          particle_radius=sample_radius,
-                                          mode=sample_x_fill_mode,
-                                          box_min=container_distance.aabb_min,
-                                          box_max=container_distance.aabb_max)
-dp.remove(sample_internal_encoded)
-## ======== end of internal sample points
 
 container_aabb_range_per_h = container_extent / kernel_radius
 cni.grid_res = al.uint3(int(math.ceil(container_aabb_range_per_h.x)),
