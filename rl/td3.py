@@ -47,7 +47,6 @@ def symmetrize_state_batch(state_batch):
                          symmetrize_vector_batch(state_batch[:, 9:12]),
                          symmetrize_vector_batch(state_batch[:, 12:15]),
                          symmetrize_quat3_batch(state_batch[:, 15:18]),
-
                          symmetrize_vector_batch(state_batch[:, 18:21]),
                          symmetrize_vector_batch(state_batch[:, 21:24]),
                          symmetrize_vector_batch(state_batch[:, 24:27]),
@@ -60,10 +59,19 @@ def symmetrize_state_batch(state_batch):
                          symmetrize_vector_batch(state_batch[:, 45:48]),
                          symmetrize_vector_batch(state_batch[:, 48:51]),
                          symmetrize_vector_batch(state_batch[:, 51:54]),
-
                          symmetrize_vector_batch(state_batch[:, 54:57]),
-                         symmetrize_scalar_batch(state_batch[:, 57]),
-                         symmetrize_scalar_batch(state_batch[:, 58])))
+                         symmetrize_vector_batch(state_batch[:, 57:60]),
+                         symmetrize_vector_batch(state_batch[:, 60:63]),
+                         symmetrize_vector_batch(state_batch[:, 63:66]),
+                         symmetrize_vector_batch(state_batch[:, 66:69]),
+                         symmetrize_vector_batch(state_batch[:, 69:72]),
+                         symmetrize_vector_batch(state_batch[:, 72:75]),
+                         symmetrize_vector_batch(state_batch[:, 75:78]),
+                         symmetrize_vector_batch(state_batch[:, 78:81]),
+                         symmetrize_vector_batch(state_batch[:, 81:84]),
+                         symmetrize_vector_batch(state_batch[:, 84:87]),
+                         symmetrize_scalar_batch(state_batch[:, 87]),
+                         symmetrize_scalar_batch(state_batch[:, 88])))
 
 
 def symmetrize_action_batch(action_batch):

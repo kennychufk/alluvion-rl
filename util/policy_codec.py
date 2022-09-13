@@ -6,7 +6,7 @@ from .quaternion import get_quat3, rotate_using_quaternion, get_quat4
 
 # POLICY_CODEC
 def get_state_dim():
-    return 59
+    return 89
 
 
 def get_action_dim():
@@ -81,6 +81,26 @@ def make_state(dp, unit, kinematic_viscosity_real, buoy_v_real, buoy_v_ma0,
                 if 5 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
                 vi - buoy_v_real[dist_sort_index[5]]
                 if 5 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                xij[dist_sort_index[6]]
+                if 6 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                vi - buoy_v_real[dist_sort_index[6]]
+                if 6 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                xij[dist_sort_index[7]]
+                if 7 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                vi - buoy_v_real[dist_sort_index[7]]
+                if 7 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                xij[dist_sort_index[8]]
+                if 8 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                vi - buoy_v_real[dist_sort_index[8]]
+                if 8 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                xij[dist_sort_index[9]]
+                if 9 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                vi - buoy_v_real[dist_sort_index[9]]
+                if 9 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                xij[dist_sort_index[10]]
+                if 10 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
+                vi - buoy_v_real[dist_sort_index[10]]
+                if 10 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
                 sample_v_real[buoy_id].flatten(),
                 sample_density_relative[buoy_id],
                 # sample_vort_real[buoy_id].flatten(),

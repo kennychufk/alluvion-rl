@@ -107,7 +107,7 @@ cni.max_num_neighbors_per_particle = 64
 solver = dp.SolverI(runner,
                     pile,
                     dp,
-                    num_particles + 10000,
+                    num_particles,
                     num_ushers=0,
                     enable_surface_tension=False,
                     enable_vorticity=False,
@@ -155,7 +155,6 @@ display_proxy.add_show_framebuffer_shader(framebuffer)
 for frame_id in range(10000):
     display_proxy.draw()
     # framebuffer.write(f"screen{frame_id}.bmp")
-    print(framebuffer.width, framebuffer.height)
 
     dp.map_graphical_pointers()
     for substep_id in range(20):
