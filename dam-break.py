@@ -7,8 +7,7 @@ import numpy as np
 from util import Unit
 
 dp = al.Depot(np.float32)
-cn = dp.cn
-cni = dp.cni
+cn, cni = dp.create_cn()
 dp.create_display(800, 600, "", False)
 display_proxy = dp.get_display_proxy()
 framebuffer = display_proxy.create_framebuffer()
@@ -22,8 +21,7 @@ particle_mass = cubical_particle_volume * volume_relative_to_cube * density0
 
 gravity = dp.f3(0, -1, 0)
 
-# real_kernel_radius = 0.0025
-unit = Unit(real_kernel_radius=0.005,
+unit = Unit(real_kernel_radius=2**-6,
             real_density0=1000,
             real_gravity=-9.80665)
 
@@ -37,44 +35,35 @@ cn.inertia_inverse = 0.5
 cn.vorticity_coeff = 0.01
 cn.viscosity_omega = 0.1
 
+container_pellet_filename = f'cache/cube24-0.015625.alu'
+
+container_num_pellets = dp.get_alu_info(container_pellet_filename)[0][0]
+num_pellets = container_num_pellets
 # rigids
 max_num_contacts = 512
-pile = dp.Pile(dp, runner, max_num_contacts)
-cube_mesh = al.Mesh()
-real_outset = unit.rl * 0.5  # NOTE: unstable when equal to unit.rl
-container_dim = unit.from_real_length(al.float3(0.4, 0.3, 0.15) + real_outset)
-cube_mesh.set_box(container_dim, 4)
-container_distance = dp.BoxDistance.create(
-    unit.from_real_length(dp.f3(0.4, 0.3, 0.15)),
-    outset=unit.from_real_length(real_outset))
-pile.add(container_distance,
-         al.uint3(80, 60, 30),
-         sign=-1,
-         collision_mesh=cube_mesh,
-         mass=0,
-         restitution=1,
-         friction=0,
-         inertia_tensor=dp.f3(1, 1, 1),
-         x=unit.from_real_length(dp.f3(0, 0.15, 0)),
-         q=dp.f4(0, 0, 0, 1),
-         display_mesh=al.Mesh())
+pile = dp.Pile(dp, runner, max_num_contacts, al.VolumeMethod.pellets,
+               num_pellets)
 
-inset_factor = 0
-sphere_radius = unit.from_real_length(0.01)
-sphere_mesh = al.Mesh()
-sphere_mesh.set_uv_sphere(sphere_radius, 24, 24)
-sphere_mass = density0 * sphere_radius * sphere_radius * sphere_radius * np.pi * 4 / 3 * 0.7
-pile.add(dp.SphereDistance.create(sphere_radius),
-         al.uint3(64, 64, 64),
-         sign=1,
-         collision_mesh=sphere_mesh,
-         mass=sphere_mass,
-         restitution=0,
-         friction=0,
-         inertia_tensor=dp.f3(1, 1, 1),
-         x=unit.from_real_length(dp.f3(0, 0.04, 0)),
-         q=dp.f4(0, 0, 0, 1),
-         display_mesh=sphere_mesh)
+## ================== using cube
+container_width = unit.from_real_length(0.24)
+container_dim = dp.f3(container_width, container_width, container_width)
+container_distance = dp.BoxDistance.create(container_dim, outset=0)
+container_extent = container_distance.aabb_max - container_distance.aabb_min
+container_res_float = container_extent / particle_radius
+container_res = al.uint3(int(container_res_float.x),
+                         int(container_res_float.y),
+                         int(container_res_float.z))
+print('container_res', container_res)
+container_pellet_x = dp.create((container_num_pellets), 3)
+container_pellet_x.read_file(container_pellet_filename)
+pile.add_pellets(container_distance,
+                 container_res,
+                 pellets=container_pellet_x,
+                 sign=-1,
+                 mass=0,
+                 restitution=0.8,
+                 friction=0.3)
+dp.remove(container_pellet_x)
 
 # ## DEBUG
 # bunny_mesh = al.Mesh()
@@ -84,14 +73,10 @@ pile.add(dp.SphereDistance.create(sphere_radius),
 # bunny_triangle_mesh = dp.TriangleMesh(bunny_filename)
 # bunny_distance = dp.MeshDistance(bunny_triangle_mesh)
 # bunny_id = pile.add(bunny_distance,
-#                     al.uint3(40, 40, 40),
-#                     sign=1,
 #                     collision_mesh=bunny_mesh,
 #                     mass=unit.from_real_mass(0.001),
 #                     restitution=0.2,
 #                     friction=0.8,
-#                     inertia_tensor=unit.from_real_moment_of_inertia(
-#                         dp.f3(1e-4, 1e-4, 1e-4)),
 #                     x=unit.from_real_length(dp.f3(0.07, 0.07, 0.0)),
 #                     q=dp.f4(np.sqrt(2), 0, 0, np.sqrt(2)),
 #                     display_mesh=bunny_mesh)
@@ -101,37 +86,33 @@ pile.set_gravity(gravity)
 cn.contact_tolerance = particle_radius
 
 block_mode = 0
-y_shift_due_to_outset = dp.f3(0, real_outset, 0)
-box_min = unit.from_real_length(dp.f3(-0.195, 0,
-                                      -0.05)) - y_shift_due_to_outset
-box_max = unit.from_real_length(dp.f3(-0.095, 0.1,
-                                      0.05)) - y_shift_due_to_outset
+box_min = unit.from_real_length(dp.f3(-0.12, -0.12, -0.12))
+box_max = unit.from_real_length(dp.f3(0.12, -0.04, 0.12))
 num_particles = dp.Runner.get_fluid_block_num_particles(
     mode=block_mode,
     box_min=box_min,
     box_max=box_max,
     particle_radius=particle_radius)
-container_aabb_range = container_distance.aabb_max - container_distance.aabb_min
-container_aabb_range_per_h = container_aabb_range / kernel_radius
-grid_res = al.uint3(int(math.ceil(container_aabb_range_per_h.x)),
-                    int(math.ceil(container_aabb_range_per_h.y)),
-                    int(math.ceil(container_aabb_range_per_h.z))) + 4
-grid_offset = al.int3(-(int(grid_res.x) // 2) - 2,
-                      -int(math.ceil(real_outset / kernel_radius)) - 1,
-                      -(int(grid_res.z) // 2) - 2)
-
-cni.grid_res = grid_res
-cni.grid_offset = grid_offset
+container_aabb_range_per_h = container_extent / kernel_radius
+cni.grid_res = al.uint3(int(math.ceil(container_aabb_range_per_h.x)),
+                        int(math.ceil(container_aabb_range_per_h.y)),
+                        int(math.ceil(container_aabb_range_per_h.z))) + 4
+cni.grid_offset = al.int3(
+    int(container_distance.aabb_min.x) - 2,
+    int(container_distance.aabb_min.y) - 2,
+    int(container_distance.aabb_min.z) - 2)
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
 solver = dp.SolverI(runner,
                     pile,
                     dp,
-                    num_particles,
+                    num_particles + 10000,
                     num_ushers=0,
                     enable_surface_tension=False,
                     enable_vorticity=False,
+                    cn=cn,
+                    cni=cni,
                     graphical=True)
 particle_normalized_attr = dp.create_graphical_like(solver.particle_density)
 solver.num_particles = num_particles
@@ -171,7 +152,7 @@ display_proxy.add_pile_shading_program(pile)
 display_proxy.add_show_framebuffer_shader(framebuffer)
 
 #display_proxy.run()
-for frame_id in range(10):
+for frame_id in range(10000):
     display_proxy.draw()
     # framebuffer.write(f"screen{frame_id}.bmp")
     print(framebuffer.width, framebuffer.height)

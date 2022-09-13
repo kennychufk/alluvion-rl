@@ -105,7 +105,7 @@ class FluidSamplePellets:
 
 class OptimSamplingPellets(FluidSamplePellets):
 
-    def __init__(self, dp, pipe_length, pipe_radius, ts, num_particles):
+    def __init__(self, dp, cni, pipe_length, pipe_radius, ts, num_particles):
         self.ts = ts
         self.num_sections = 14
         self.num_rotations = 16
@@ -131,7 +131,7 @@ class OptimSamplingPellets(FluidSamplePellets):
                 offset_y_per_rotation * rotation_id,
                 self.rs[r_id] * np.sin(theta)
             ], dp.default_dtype)
-        super().__init__(dp, sample_x_host)
+        super().__init__(dp, sample_x_host, cni)
         self.reset()
 
     def reset(self):

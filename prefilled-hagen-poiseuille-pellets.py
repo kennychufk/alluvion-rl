@@ -218,7 +218,7 @@ def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
     ts = approx_half_life * lambda_factors
 
     print('ts', ts)
-    osampling = OptimSamplingPellets(dp, pipe_length, pipe_radius, ts,
+    osampling = OptimSamplingPellets(dp, cni, pipe_length, pipe_radius, ts,
                                      solver.num_particles)
 
     best_loss = np.finfo(np.float64).max
