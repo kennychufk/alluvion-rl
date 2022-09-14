@@ -304,7 +304,7 @@ class Environment:
         print('num_particles', num_particles, 'self.num_buoys', self.num_buoys)
 
     def reset_solver_initial(self):
-        postfix = f"-{self.real_kernel_radius}-{float(self.real_density0)}-{self.real_fluid_mass}.alu"
+        postfix = f"-{self.real_kernel_radius}-{float(self.real_density0)}-{float(self.real_fluid_mass)}.alu"
         self.initial_particle_x_filename = f'{self.cache_dir}/playground_bead_x{postfix}'
         self.initial_particle_v_filename = f'{self.cache_dir}/playground_bead_v{postfix}'
         self.initial_particle_pressure_filename = f'{self.cache_dir}/playground_bead_p{postfix}'
