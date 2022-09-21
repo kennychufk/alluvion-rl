@@ -144,10 +144,12 @@ class OptimSamplingPellets(FluidSamplePellets):
         self.density_stat = np.zeros((len(self.ts), self.num_particles),
                                      self.dp.default_dtype)
 
-    def aggregate(self):
+    def aggregate(self, reached_checkpoint):
         sample_vx = self.sample_data3.get().reshape(-1, self.num_rs, 3)[..., 1]
-        self.vx[self.sampling_cursor] = np.mean(sample_vx, axis=0)
-
         density_ungrouped = self.sample_data1.get().reshape(-1, self.num_rs)
-        self.density[self.sampling_cursor] = np.mean(density_ungrouped, axis=0)
-        self.sampling_cursor += 1
+        self.vx_instant = np.mean(sample_vx, axis=0)
+        if reached_checkpoint:
+            self.vx[self.sampling_cursor] = self.vx_instant
+            self.density[self.sampling_cursor] = np.mean(density_ungrouped,
+                                                         axis=0)
+            self.sampling_cursor += 1
