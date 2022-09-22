@@ -38,15 +38,24 @@ def calculate_terminal_velocity(kinematic_viscosity, pipe_radius,
     return 0.25 * accelerations * pipe_radius * pipe_radius / kinematic_viscosity
 
 
-def pressurize(dp, solver, osampling):
+def pressurize(dp, solver, osampling, sample_process=False):
     runner = solver.runner
     next_sample_t = osampling.ts[osampling.sampling_cursor]
-    if solver.t + solver.max_dt >= next_sample_t:
+    reached_checkpoint = False
+    if solver.t + solver.dt >= next_sample_t:
         remainder_dt = next_sample_t - solver.t
-        original_dt = solver.max_dt
+        original_max_dt = solver.max_dt
+        original_min_dt = solver.min_dt
+        original_initial_dt = solver.initial_dt
         solver.max_dt = solver.min_dt = solver.initial_dt = remainder_dt
         solver.step_wrap1()
-        solver.max_dt = solver.min_dt = solver.initial_dt = original_dt
+        solver.max_dt = original_max_dt
+        solver.min_dt = original_min_dt
+        solver.initial_dt = original_initial_dt
+        reached_checkpoint = True
+    else:
+        solver.step_wrap1()
+    if reached_checkpoint or sample_process:
         osampling.prepare_neighbor_and_boundary_wrap1(runner, solver)
         osampling.sample_vector3(runner, solver, solver.particle_v)
         osampling.sample_density(runner)
@@ -55,6 +64,5 @@ def pressurize(dp, solver, osampling):
         osampling.r_stat[osampling.sampling_cursor] = LA.norm(dp.coat(
             solver.particle_x).get(solver.num_particles)[:, [0, 2]],
                                                               axis=1)
-        osampling.aggregate()
-    else:
-        solver.step_wrap1()
+        osampling.aggregate(reached_checkpoint)
+    return reached_checkpoint

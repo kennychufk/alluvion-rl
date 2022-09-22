@@ -25,7 +25,10 @@ parser.add_argument('pos', metavar='x', type=str, nargs=1)
 parser.add_argument('pellets', metavar='p', type=str, nargs=1)
 parser.add_argument('stat', metavar='s', type=str, nargs=1)
 parser.add_argument('--display', metavar='d', type=bool, default=False)
+parser.add_argument('--save-all', type=bool, default=False)
 args = parser.parse_args()
+
+particle_output_dir = '/home/kennychufk/workspace/pythonWs/vis-opt-particles'
 
 
 class TemporalStat:
@@ -56,8 +59,8 @@ def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
     # solver.enable_divergence_solve = False
     # solver.enable_density_solve = False
     cn.dfsph_factor_epsilon = 1e-6
-    solver.max_density_solve = 0
-    solver.min_density_solve = 0
+    solver.max_density_solve = 100
+    solver.min_density_solve = 2
     # cn.vorticity_coeff = param[2]
     # cn.viscosity_omega = param[3]
     cn.inertia_inverse = 0.5  # recommended by author
@@ -69,9 +72,31 @@ def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
     solver.reset_t()
     solver.num_particles = initial_particle_x.get_shape()[0]
     step_id = 0
+    output_label = f'{param[0]}-{param[1]}-{is_grad_eval}'
+    checkpoint_step_ids = np.zeros(len(ts), np.int32)
     while osampling.sampling_cursor < len(ts):
-        pressurize(dp, solver, osampling)
-        if not is_grad_eval:
+        reached_checkpoint = pressurize(dp,
+                                        solver,
+                                        osampling,
+                                        sample_process=True)
+        if reached_checkpoint:
+            checkpoint_step_ids[osampling.sampling_cursor - 1] = step_id
+        if args.save_all:
+            scaled_particle.set_from(solver.particle_x, solver.num_particles)
+            scaled_particle.scale(unit.to_real_length(1))
+            scaled_particle.write_file(
+                f'{particle_output_dir}/x-{output_label}-{step_id}.alu',
+                solver.num_particles)
+
+            scaled_particle.set_from(solver.particle_v, solver.num_particles)
+            scaled_particle.scale(unit.to_real_velocity(1))
+            scaled_particle.write_file(
+                f'{particle_output_dir}/v-{output_label}-{step_id}.alu',
+                solver.num_particles)
+            np.save(f'{particle_output_dir}/vx-{output_label}-{step_id}.npy',
+                    osampling.vx_instant)
+        # if not is_grad_eval:
+        if True:
             density_min = dp.Runner.min(solver.particle_density,
                                         solver.num_particles)
             density_max = dp.Runner.max(solver.particle_density,
@@ -95,6 +120,11 @@ def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
     tstat.rs = osampling.rs
     tstat.density_stat = osampling.density_stat
     tstat.r_stat = osampling.r_stat
+    if args.save_all:
+        np.save(f'{particle_output_dir}/ts-{output_label}.npy',
+                unit.to_real_time(np.array(tstat.ts)))
+        np.save(f'{particle_output_dir}/checkpoint_step_ids.npy',
+                checkpoint_step_ids)
     return osampling.vx, tstat
 
 
@@ -155,6 +185,8 @@ def save_result(iteration, ground_truth, simulated, osampling, unit,
         ax.legend()
     plt.savefig(f'.alcache/{iteration}.png')
     plt.close('all')
+    if args.save_all:
+        np.save(f'{particle_output_dir}/ground_truth.npy', ground_truth)
 
 
 def plot_summary(iteration, summary, unit):
@@ -220,6 +252,9 @@ def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
     print('ts', ts)
     osampling = OptimSamplingPellets(dp, cni, pipe_length, pipe_radius, ts,
                                      solver.num_particles)
+    if args.save_all:
+        np.save(f'{particle_output_dir}/rs.npy', osampling.rs)
+        np.save(f'{particle_output_dir}/ts.npy', osampling.ts)
 
     best_loss = np.finfo(np.float64).max
     best_x = None
@@ -229,7 +264,10 @@ def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
 
     with open('switch', 'w') as f:
         f.write('1')
-    for iteration in range(200):
+    num_iterations = 200
+    if args.save_all:
+        num_iterations = 1
+    for iteration in range(num_iterations):
         with open('switch', 'r') as f:
             if f.read(1) == '0':
                 break
@@ -335,6 +373,8 @@ accelerations = np.array(
     [1.0]) * 4 * kinematic_viscosity * kinematic_viscosity / (
         pipe_radius * pipe_radius * pipe_radius)
 print('accelerations', accelerations)
+if args.save_all:
+    np.save(f'{particle_output_dir}/accelerations.npy', accelerations)
 # accelerations = np.array([2**-13 / 100])
 # accelerations = np.array([2**-8 / 100])
 terminal_v = calculate_terminal_velocity(kinematic_viscosity, pipe_radius,
@@ -408,6 +448,10 @@ initial_particle_x = dp.create((num_particles), 3)
 initial_particle_x.read_file(args.pos[0])
 param0 = unit.from_real_kinematic_viscosity(
     np.array([2.07555972188988, 4.024484458097265])) * kinematic_viscosity_real
+if args.save_all:
+    scaled_particle = dp.create_coated_like(initial_particle_x)
+    param0 = unit.from_real_kinematic_viscosity(np.array(
+        [2.5, 3.5])) * kinematic_viscosity_real
 adam = AdamOptim(param0, lr=2e-4)
 
 old_filenames = glob.glob('.alcache/*.mp4') + glob.glob('.alcache/*.png')
