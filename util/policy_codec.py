@@ -6,7 +6,7 @@ from .quaternion import get_quat3, rotate_using_quaternion, get_quat4
 
 # POLICY_CODEC
 def get_state_dim():
-    return 93
+    return 94
 
 
 def get_action_dim():
@@ -40,6 +40,7 @@ def make_state(dp, unit, kinematic_viscosity_real, buoy_v_real, buoy_v_ma0,
         sample_container_kernel_sim[:, :3])
     sample_container_kernel_vol = sample_container_kernel_sim[:,
                                                               3]  # dimensionless
+    buoy_v_mean = np.mean(LA.norm(buoy_v_real, axis=1))
 
     for buoy_id in range(num_buoys):
         xi = coil_x_real[buoy_id]
@@ -102,12 +103,13 @@ def make_state(dp, unit, kinematic_viscosity_real, buoy_v_real, buoy_v_ma0,
                 if 10 < num_buoys - 1 else np.zeros(3, dtype=xi.dtype),
                 sample_v_real[buoy_id].flatten(),
                 sample_density_relative[buoy_id],
-                # sample_vort_real[buoy_id].flatten(),
                 sample_container_kernel_vol_grad_real[buoy_id].flatten(),
                 sample_container_kernel_vol[buoy_id].flatten(),
+                # sample_vort_real[buoy_id].flatten(),
                 # unit.rdensity0 / 1000,
                 # kinematic_viscosity_real * 1e6,
-                num_buoys / 10),
+                num_buoys / 10,
+                buoy_v_mean),
             axis=None)
     return state_aggregated
 

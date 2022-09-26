@@ -73,7 +73,8 @@ def symmetrize_state_batch(state_batch):
                          symmetrize_scalar_batch(state_batch[:, 87]),
                          symmetrize_vector_batch(state_batch[:, 88:91]),
                          symmetrize_scalar_batch(state_batch[:, 91]),
-                         symmetrize_scalar_batch(state_batch[:, 92])))
+                         symmetrize_scalar_batch(state_batch[:, 92]),
+                         symmetrize_scalar_batch(state_batch[:, 93])))
 
 
 def symmetrize_action_batch(action_batch):
