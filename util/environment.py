@@ -286,8 +286,7 @@ class Environment:
                 f'{self.truth_dir}/{episode_t}.pile')
             buoy_trajectories[:, episode_t]['x'] = truth_pile_x[1:1 +
                                                                 self.num_buoys]
-            buoy_trajectories[:, episode_t]['q'] = np.roll(
-                truth_pile_q[1:1 + self.num_buoys], -1, axis=1)
+            buoy_trajectories[:, episode_t]['q'] = truth_pile_q[1:1 + self.num_buoys]
         for buoy_id in range(self.num_buoys):
             buoy_trajectories[buoy_id]['x'] += np.tile(
                 np.random.normal(scale=2e-3, size=(3)),
@@ -530,6 +529,9 @@ class EnvironmentPIV(Environment):
 
     def get_num_buoys(self, truth_dir):
         return len(np.load(f'{truth_dir}/rec/marker_ids.npy'))
+
+    def find_truth_max_num_beads(self):
+        return 0
 
     def __init__(self,
                  dp,

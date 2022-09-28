@@ -65,7 +65,8 @@ env_piv = EnvironmentPIV(dp,
                          cache_dir=args.cache_dir,
                          ma_alphas=config['ma_alphas'],
                          display=args.display,
-                         volume_method=al.VolumeMethod.pellets)
+                         volume_method=al.VolumeMethod.pellets,
+                         save_visual=True)
 
 if args.model_iteration < 0:
     history = run.scan_history(keys=None,
