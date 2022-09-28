@@ -115,8 +115,8 @@ for step_id in range(-1, num_steps + 2):
                                   edgecolor=cmap(0)))
 
             if step_id >= 0 and step_id < num_steps:
-                vx = unit.to_real_velocity(simulated[acc_id][step_id])
-                vx_scaled = vx * scale_velocity
+                vx_scaled = unit.to_real_velocity(
+                    simulated[acc_id][step_id]) * scale_velocity
                 ax.plot(rs_scaled, vx_scaled, c='black')
 
                 vx_inerpolate = interpolate.interp1d(rs_scaled, vx_scaled)
