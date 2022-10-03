@@ -10,7 +10,7 @@ def get_state_dim():
 
 
 def get_action_dim():
-    return 8
+    return 9
 
 
 def get_coil_x_from_com(dp, unit, buoy_spec, buoy_x_real, buoy_q, num_buoys):
@@ -129,6 +129,8 @@ def set_usher_param(usher, dp, unit, buoy_v_real, coil_x_real,
     usher_kernel_radius = action_aggregated[:, 6]
     # [20] strength
     strength = action_aggregated[:, 7]
+    switch = action_aggregated[:, 8]
+    strength *= (switch > 0)
 
     # direction_quat3 = action_aggregated[:, 8:11]
     # direction_mag = action_aggregated[:, 11]

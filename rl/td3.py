@@ -82,7 +82,8 @@ def symmetrize_action_batch(action_batch):
     return torch.hstack((symmetrize_vector_batch(action_batch[:, 0:3]),
                          symmetrize_vector_batch(action_batch[:, 3:6]),
                          symmetrize_scalar_batch(action_batch[:, 6]),
-                         symmetrize_scalar_batch(action_batch[:, 7])))
+                         symmetrize_scalar_batch(action_batch[:, 7]),
+                         symmetrize_scalar_batch(action_batch[:, 8])))
 
 
 def average_out_symmetric_x(symmetric):

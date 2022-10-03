@@ -83,7 +83,7 @@ env = Environment(dp,
                   cache_dir=args.cache_dir,
                   ma_alphas=ma_alphas,
                   display=args.display,
-                  reward_option=1)
+                  reward_option=0)
 env.seed(args.seed)
 
 min_xoffset_y = -0.02
@@ -94,6 +94,8 @@ max_focal_dist = 0.20
 min_usher_kernel_radius = 0.01
 max_usher_kernel_radius = 0.12
 max_strength = 25
+switch_min = -1
+switch_max = 1
 
 agent = TD3(actor_lr=3e-4,
             critic_lr=3e-4,
@@ -104,12 +106,13 @@ agent = TD3(actor_lr=3e-4,
             gamma=0.95,
             min_action=np.array([
                 -max_xoffset, min_xoffset_y, -max_xoffset, -max_voffset,
-                -max_voffset, -max_voffset, min_usher_kernel_radius, 0
+                -max_voffset, -max_voffset, min_usher_kernel_radius, 0,
+                switch_min
             ]),
             max_action=np.array([
                 +max_xoffset, max_xoffset_y, +max_xoffset, +max_voffset,
                 +max_voffset, +max_voffset, max_usher_kernel_radius,
-                max_strength
+                max_strength, switch_max
             ]),
             learn_after=10000,
             replay_size=36000000,

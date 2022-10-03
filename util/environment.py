@@ -110,10 +110,10 @@ class Environment:
         # === constants
 
         max_num_beads = self.find_max_num_beads()
-        max_num_buoys = self.find_max_num_buoys()
-        truth_max_num_beads = self.find_truth_max_num_beads()
-        print('max_num_buoys', max_num_buoys)
         print('max_num_beads', max_num_beads)
+        max_num_buoys = self.find_max_num_buoys()
+        print('max_num_buoys', max_num_buoys)
+        truth_max_num_beads = self.find_truth_max_num_beads()
 
         container_num_pellets = self.dp.get_alu_info(
             self.container_pellet_filename)[0][0]
@@ -286,7 +286,8 @@ class Environment:
                 f'{self.truth_dir}/{episode_t}.pile')
             buoy_trajectories[:, episode_t]['x'] = truth_pile_x[1:1 +
                                                                 self.num_buoys]
-            buoy_trajectories[:, episode_t]['q'] = truth_pile_q[1:1 + self.num_buoys]
+            buoy_trajectories[:, episode_t]['q'] = truth_pile_q[1:1 +
+                                                                self.num_buoys]
         for buoy_id in range(self.num_buoys):
             buoy_trajectories[buoy_id]['x'] += np.tile(
                 np.random.normal(scale=2e-3, size=(3)),
@@ -360,15 +361,13 @@ class Environment:
 
     def get_buoy_kinematics_real(self, episode_t):
         t_real = episode_t * self.truth_real_interval
-        buoy_v_shift = np.zeros(3, self.dp.default_dtype)
         buoys_x = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
         buoys_v = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
         buoys_q = np.zeros((self.num_buoys, 4), self.dp.default_dtype)
 
         for buoy_id in range(self.num_buoys):
             buoys_x[buoy_id] = self.buoy_interpolators[buoy_id].get_x(t_real)
-            buoys_v[buoy_id] = self.buoy_interpolators[buoy_id].get_v(
-                t_real) + buoy_v_shift
+            buoys_v[buoy_id] = self.buoy_interpolators[buoy_id].get_v(t_real)
             buoys_q[buoy_id] = self.buoy_interpolators[buoy_id].get_q(t_real)
         return buoys_x, buoys_v, buoys_q
 
@@ -605,7 +604,6 @@ class EnvironmentPIV(Environment):
         buoy_x_shift = np.array(
             [0, -0.026, 0], self.dp.default_dtype
         )  # coil center to board surface: 21mm, tank thickness: 5mm
-        buoy_v_shift = np.zeros(3, self.dp.default_dtype)
         buoys_x = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
         buoys_v = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
         buoys_q = np.zeros((self.num_buoys, 4), self.dp.default_dtype)
@@ -613,8 +611,7 @@ class EnvironmentPIV(Environment):
         for buoy_id in range(self.num_buoys):
             buoys_x[buoy_id] = self.buoy_interpolators[buoy_id].get_x(
                 t_real) + buoy_x_shift
-            buoys_v[buoy_id] = self.buoy_interpolators[buoy_id].get_v(
-                t_real) + buoy_v_shift
+            buoys_v[buoy_id] = self.buoy_interpolators[buoy_id].get_v(t_real)
             buoys_q[buoy_id] = self.buoy_interpolators[buoy_id].get_q(t_real)
         return buoys_x, buoys_v, buoys_q
 
