@@ -18,6 +18,7 @@ parser.add_argument('--output-dir', type=str, default='.')
 parser.add_argument('--render', type=int, default=0)
 parser.add_argument('--shape-dir', type=str, required=True)
 parser.add_argument('--display', type=int, default=0)
+parser.add_argument('--num-buoys', type=int, default=None, required=False)
 args = parser.parse_args()
 import random
 
@@ -73,7 +74,11 @@ container_pellet_filename = f'{args.shape_dir}/cube24/cube24/models/cube24-2to-8
 buoy_pellet_filename = f'{args.shape_dir}/buoy/buoy/models/buoy-2to-8.alu'
 agitator_pellet_filename = f'{agitator_model_dir}/manifold2-decimate-2to-8.alu'
 
-num_buoys = np.random.randint(low=4, high=101)
+if args.num_buoys is None:
+    print('randomizing the number of buoys')
+    num_buoys = np.random.randint(low=4, high=101)
+else:
+    num_buoys = args.num_buoys
 
 container_num_pellets = dp.get_alu_info(container_pellet_filename)[0][0]
 buoy_num_pellets = dp.get_alu_info(buoy_pellet_filename)[0][0]
