@@ -348,6 +348,7 @@ visual_real_interval = 1.0 / visual_real_freq
 next_visual_frame_id = 0
 visual_x_scaled = dp.create_coated_like(solver.particle_x)
 visual_v2_scaled = dp.create_coated_like(solver.particle_cfl_v2)
+bead_v = dp.create_coated_like(solver.particle_v)
 
 target_t = unit.from_real_time(10.0)
 last_tranquillized = 0.0
@@ -380,6 +381,11 @@ while not rest_state_achieved or not additional_rest_elapsed or solver.t < targe
                 visual_x_scaled.scale(unit.to_real_length(1))
                 visual_x_scaled.write_file(
                     f'{frame_directory}/x-{next_truth_frame_id}.alu',
+                    solver.num_particles)
+                bead_v.set_from(solver.particle_v)
+                bead_v.scale(unit.to_real_velocity(1))
+                bead_v.write_file(
+                    f'{frame_directory}/bead-v-{next_truth_frame_id}.alu',
                     solver.num_particles)
                 # raster_radius = unit.rl * 0.36
                 # voxel_size = raster_radius / np.sqrt(3.0)
@@ -461,6 +467,7 @@ if display:
     dp.remove(particle_normalized_attr)
 dp.remove(visual_x_scaled)
 dp.remove(visual_v2_scaled)
+dp.remove(bead_v)
 del solver
 del pile
 del runner
