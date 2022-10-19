@@ -269,11 +269,13 @@ class TD3:
         mu = self.actor.forward(state).cpu().detach()
         mu_grouped = mu.view(8, -1, self.action_dim)
         self.actor.train()
+        # POLICY_CODEC
         averaged_out = torch.stack([
             *average_out_symmetric_vector(mu_grouped[:, :, 0:3]),
             *average_out_symmetric_vector(mu_grouped[:, :, 3:6]),
             average_out_scalar(mu_grouped[:, :, 6]),
             average_out_scalar(mu_grouped[:, :, 7]),
+            average_out_scalar(mu_grouped[:, :, 8]),
         ],
                                    dim=1)
         return averaged_out.numpy()

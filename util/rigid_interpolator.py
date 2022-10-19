@@ -7,22 +7,25 @@ from scipy.interpolate import splrep, splev
 from numpy import linalg as LA
 
 
+def read_robot_trace(trace_filename):
+    robot_frames = pd.read_csv(
+        trace_filename,
+        comment='"',
+        names=['tid', 'j0', 'j1', 'j2', 'j3', 'j4', 'j5', 'x', 'y', 'z', 'v'])
+    x = np.array([
+        -robot_frames['x'].to_numpy(), robot_frames['z'].to_numpy(),
+        robot_frames['y'].to_numpy()
+    ]).transpose() / 1000.0
+    t = np.arange(4000) / 200
+    return x, t
+
+
 # TODO: rename? only used for robot-controlled object
 class RigidInterpolator:
 
     def __init__(self, dp, trace_filename):
         self.dp = dp
-        robot_frames = pd.read_csv(trace_filename,
-                                   comment='"',
-                                   names=[
-                                       'tid', 'j0', 'j1', 'j2', 'j3', 'j4',
-                                       'j5', 'x', 'y', 'z', 'v'
-                                   ])
-        self.x = np.array([
-            -robot_frames['x'].to_numpy(), robot_frames['z'].to_numpy(),
-            robot_frames['y'].to_numpy()
-        ]).transpose() / 1000.0
-        self.t = np.arange(4000) / 200
+        self.x, self.t = read_robot_trace(trace_filename)
         self.cubic_spline = CubicSpline(self.t, self.x)
 
     def get_x(self, t):

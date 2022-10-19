@@ -42,8 +42,7 @@ def eval_agent(eval_env,
             if eval_env.save_visual:
                 eval_env.save_dir_visual = report_save_dir
         while not done:
-            # action = agent.get_action_symmetrized(state)
-            action = agent.get_action(state, enable_noise=False)
+            action = agent.get_action_symmetrized(state)
             real_action = agent.actor.from_normalized_action(action)
             if (report_state_action):
                 state_history[cursor] = state

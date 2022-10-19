@@ -42,10 +42,13 @@ class Environment:
                 max_num_beads = num_beads
         return max_num_beads
 
+    def get_truth_num_beads(self, truth_dir):
+        return self.dp.get_alu_info(f'{truth_dir}/v2-0.alu')[0][0]
+
     def find_truth_max_num_beads(self):
         max_num_beads = 0
         for truth_dir in self.truth_dirs:
-            num_beads = self.dp.get_alu_info(f'{truth_dir}/v2-0.alu')[0][0]
+            num_beads = self.get_truth_num_beads(truth_dir)
             if num_beads > max_num_beads:
                 max_num_beads = num_beads
         return max_num_beads
@@ -209,7 +212,8 @@ class Environment:
                                                    1, np.uint32)
         self.histogram_truth = self.dp.create_coated(
             (al.kHistogram256BinCount), 1, np.uint32)
-        self.particle_v_sim = self.dp.create_coated(
+        self.bead_v = self.dp.create_coated((self.solver.max_num_particles), 3)
+        self.bead_v_component = self.dp.create_coated(
             (self.solver.max_num_particles), 1)
         self.particle_v_truth = self.dp.create_coated((truth_max_num_beads), 1)
         self.quantized4s_sim = dp.create_coated(
@@ -255,6 +259,7 @@ class Environment:
 
     def reset_vectors(self):
         self.num_buoys = self.get_num_buoys(self.truth_dir)
+        self.truth_num_beads = self.get_truth_num_beads(self.truth_dir)
         self.buoy_v_ma0 = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
         self.buoy_v_ma1 = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
         self.buoy_v_ma2 = np.zeros((self.num_buoys, 3), self.dp.default_dtype)
@@ -275,6 +280,9 @@ class Environment:
         self.v_zero.set_zero()
         self.weight = self.dp.create_coated(
             (self.simulation_sampling.num_samples), 1)
+        # self.histogram_x_all = np.load(f'{self.truth_dir}/vx-hist.npy')
+        # self.histogram_y_all = np.load(f'{self.truth_dir}/vy-hist.npy')
+        # self.histogram_z_all = np.load(f'{self.truth_dir}/vz-hist.npy')
 
     def reset_buoy_interpolators(self):
         marker_dtype = np.dtype([('t', np.float32), ('x', np.float32, 3),
@@ -434,30 +442,76 @@ class Environment:
             return -v_error / result_obj['num_masked'], result_obj
         else:
             # KL divergence
-            self.particle_v_sim.set_from(self.solver.particle_cfl_v2,
-                                         self.solver.num_particles)
-            self.runner.sqrt_inplace(self.particle_v_sim,
+            self.bead_v_component.set_from(self.solver.particle_cfl_v2,
+                                           self.solver.num_particles)
+            self.runner.sqrt_inplace(self.bead_v_component,
                                      self.solver.num_particles)
-            self.particle_v_sim.scale(self.unit.to_real_velocity(1))
+            self.bead_v_component.scale(self.unit.to_real_velocity(1))
             max_v_bin = 0.25
             self.runner.launch_histogram256(self.partial_histogram,
                                             self.histogram_sim,
                                             self.quantized4s_sim,
-                                            self.particle_v_sim, 0, max_v_bin,
+                                            self.bead_v_component, 0, max_v_bin,
                                             self.solver.num_particles)
+            # self.bead_v.set_from(self.solver.particle_v,
+            #                      self.solver.num_particles)
+            # self.bead_v.scale(self.unit.to_real_velocity(1))
+
+            # self.runner.extract_x(self.bead_v, self.bead_v_component,
+            #                       self.solver.num_particles)
+            # self.runner.launch_histogram256(self.partial_histogram,
+            #                                 self.histogram_sim,
+            #                                 self.quantized4s_sim,
+            #                                 self.bead_v_component, -max_v_bin,
+            #                                 max_v_bin,
+            #                                 self.solver.num_particles)
+            # self.histogram_truth.set(self.histogram_x_all[episode_t -
+            #                                               self._reward_delay])
+            # kl_div_x = self.runner.calculate_kl_divergence(
+            #     self.histogram_sim, self.histogram_truth,
+            #     self.solver.num_particles, self.truth_num_beads)
+
+            # self.runner.extract_y(self.bead_v, self.bead_v_component,
+            #                       self.solver.num_particles)
+            # self.runner.launch_histogram256(self.partial_histogram,
+            #                                 self.histogram_sim,
+            #                                 self.quantized4s_sim,
+            #                                 self.bead_v_component, -max_v_bin,
+            #                                 max_v_bin,
+            #                                 self.solver.num_particles)
+            # self.histogram_truth.set(self.histogram_y_all[episode_t -
+            #                                               self._reward_delay])
+            # kl_div_y = self.runner.calculate_kl_divergence(
+            #     self.histogram_sim, self.histogram_truth,
+            #     self.solver.num_particles, self.truth_num_beads)
+
+            # self.runner.extract_z(self.bead_v, self.bead_v_component,
+            #                       self.solver.num_particles)
+            # self.runner.launch_histogram256(self.partial_histogram,
+            #                                 self.histogram_sim,
+            #                                 self.quantized4s_sim,
+            #                                 self.bead_v_component, -max_v_bin,
+            #                                 max_v_bin,
+            #                                 self.solver.num_particles)
+            # self.histogram_truth.set(self.histogram_z_all[episode_t -
+            #                                               self._reward_delay])
+            # kl_div_z = self.runner.calculate_kl_divergence(
+            #     self.histogram_sim, self.histogram_truth,
+            #     self.solver.num_particles, self.truth_num_beads)
+
+            # kl_div = kl_div_x + kl_div_y + kl_div_z
             self.particle_v_truth.read_file(
                 f'{self.truth_dir}/v2-{episode_t-self._reward_delay}.alu')
             self.runner.sqrt_inplace(self.particle_v_truth,
-                                     self.particle_v_truth.get_linear_shape())
-            self.runner.launch_histogram256(
-                self.partial_histogram, self.histogram_truth,
-                self.quantized4s_truth, self.particle_v_truth, 0, max_v_bin,
-                self.particle_v_truth.get_linear_shape(
-                ))  # TODO: when the number of truth particles differ
+                                     self.truth_num_beads)
+            self.runner.launch_histogram256(self.partial_histogram,
+                                            self.histogram_truth,
+                                            self.quantized4s_truth,
+                                            self.particle_v_truth, 0,
+                                            max_v_bin, self.truth_num_beads)
             kl_div = self.runner.calculate_kl_divergence(
                 self.histogram_sim, self.histogram_truth,
-                self.solver.num_particles,
-                self.particle_v_truth.get_linear_shape())
+                self.solver.num_particles, self.truth_num_beads)
             result_obj = {}
             result_obj['v_error'] = kl_div
             result_obj['truth_sqr'] = 0

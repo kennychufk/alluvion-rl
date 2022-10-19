@@ -15,7 +15,6 @@ from util import Unit, FluidSamplePellets, get_timestamp_and_hash, BuoySpec, par
 
 parser = argparse.ArgumentParser(description='RL ground truth generator')
 parser.add_argument('--output-dir', type=str, default='.')
-parser.add_argument('--write-visual', type=bool, default=False)
 parser.add_argument('--render', type=bool, default=False)
 parser.add_argument('--shape-dir', type=str, required=True)
 parser.add_argument('--seed', type=int, required=True)
@@ -382,15 +381,15 @@ while not rest_state_achieved or solver.t < target_t:
                     unit.to_real_length(1), unit.to_real_velocity(1),
                     unit.to_real_angular_velocity(1))
                 next_truth_frame_id += 1
-            if args.write_visual and solver.t >= unit.from_real_time(
+            if args.render and solver.t >= unit.from_real_time(
                     next_visual_frame_id * visual_real_interval):
                 #framebuffer.write(f"{frame_directory}
-                pixels = np.array(framebuffer.get(), dtype=np.byte)
-                pil_image = Image.fromarray(
-                    pixels.reshape(framebuffer.height, framebuffer.width, 3),
-                    "RGB")
-                pil_image.save(
-                    f"{frame_directory}/visual-{next_visual_frame_id}.png")
+                # pixels = np.array(framebuffer.get(), dtype=np.byte)
+                # pil_image = Image.fromarray(
+                #     pixels.reshape(framebuffer.height, framebuffer.width, 3),
+                #     "RGB")
+                # pil_image.save(
+                #     f"{frame_directory}/visual-{next_visual_frame_id}.png")
                 visual_x_scaled.set_from(solver.particle_x)
                 visual_x_scaled.scale(unit.to_real_length(1))
                 visual_x_scaled.write_file(
@@ -477,7 +476,7 @@ if args.render:
         "-e",
         "300",
         "-d",
-        f"/home/kennychufk/workspace/pythonWs/test-run-al-outside/{frame_directory}",
+        f"{frame_directory}",
         "--output-prefix",
         "truth-agitator",
         "--render-liquid",
