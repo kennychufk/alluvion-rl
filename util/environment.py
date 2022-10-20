@@ -451,7 +451,8 @@ class Environment:
             self.runner.launch_histogram256(self.partial_histogram,
                                             self.histogram_sim,
                                             self.quantized4s_sim,
-                                            self.bead_v_component, 0, max_v_bin,
+                                            self.bead_v_component, 0,
+                                            max_v_bin,
                                             self.solver.num_particles)
             # self.bead_v.set_from(self.solver.particle_v,
             #                      self.solver.num_particles)
@@ -586,6 +587,15 @@ class EnvironmentPIV(Environment):
     def find_truth_max_num_beads(self):
         return 0
 
+    def get_truth_num_beads(self, truth_dir):
+        unit = Unit(real_kernel_radius=self.unit.rl,
+                    real_density0=np.load(f'{truth_dir}/density0_real.npy'),
+                    real_gravity=self.unit.rg)
+        num_beads = int(
+            np.load(f'{truth_dir}/fluid_mass.npy').item() /
+            unit.to_real_mass(self.cn.particle_mass))
+        return num_beads
+
     def __init__(self,
                  dp,
                  truth_dirs,
@@ -685,10 +695,10 @@ class EnvironmentPIV(Environment):
         self.ground_truth_v.set(self.truth_v_collection[episode_t -
                                                         self._reward_delay])
         self.weight.set(self.mask_collection[episode_t - self._reward_delay])
-        v_error = self.runner.calculate_se_yz_weighted(
+        v_error = self.runner.calculate_se_yz_masked(
             simulation_v_real, self.ground_truth_v, self.weight,
             self.simulation_sampling.num_samples)
-        truth_sqr = self.runner.calculate_se_yz_weighted(
+        truth_sqr = self.runner.calculate_se_yz_masked(
             self.v_zero, self.ground_truth_v, self.weight,
             self.simulation_sampling.num_samples)
         result_obj = {}
