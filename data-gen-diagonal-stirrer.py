@@ -382,11 +382,11 @@ while not rest_state_achieved or not additional_rest_elapsed or solver.t < targe
                 visual_x_scaled.write_file(
                     f'{frame_directory}/x-{next_truth_frame_id}.alu',
                     solver.num_particles)
-                bead_v.set_from(solver.particle_v)
-                bead_v.scale(unit.to_real_velocity(1))
-                bead_v.write_file(
-                    f'{frame_directory}/bead-v-{next_truth_frame_id}.alu',
-                    solver.num_particles)
+                # bead_v.set_from(solver.particle_v)
+                # bead_v.scale(unit.to_real_velocity(1))
+                # bead_v.write_file(
+                #     f'{frame_directory}/bead-v-{next_truth_frame_id}.alu',
+                #     solver.num_particles)
                 # raster_radius = unit.rl * 0.36
                 # voxel_size = raster_radius / np.sqrt(3.0)
                 # ls = alluvol.create_liquid_level_set(
@@ -497,11 +497,5 @@ if args.render == 1:
         "1",
         "--render-agitator",
         "1",
-    ],
-                     env=os.environ.copy()).wait()
-    subprocess.Popen([
-        "/usr/bin/ffmpeg", "-r", "30", "-i", f"{frame_directory}/beads%d.png",
-        "-r", "30", "-c:v", "libx264", "-crf", "0", "-r", "30",
-        f'{args.output_dir}/rltruth-{timestamp_hash}-{timestamp_str}.mp4'
     ],
                      env=os.environ.copy()).wait()

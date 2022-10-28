@@ -229,6 +229,8 @@ class Environment:
         if self.save_visual:
             self.visual_x_scaled = self.dp.create_coated_like(
                 self.solver.particle_x)
+            self.visual_v2_scaled = self.dp.create_coated_like(
+                self.solver.particle_cfl_v2)
             self.save_dir_visual = None
 
         if display:
@@ -425,9 +427,10 @@ class Environment:
 
             self.ground_truth_v.read_file(
                 f'{self.truth_dir}/v-{episode_t-self._reward_delay}.alu')
-            self.weight.read_file(
-                f'{self.truth_dir}/density-weight-{episode_t-self._reward_delay}.alu'
-            )
+            # self.weight.read_file(
+            #     f'{self.truth_dir}/density-weight-{episode_t-self._reward_delay}.alu'
+            # )
+            self.weight.fill(1)
             v_error = self.runner.calculate_se_weighted(
                 simulation_v_real, self.ground_truth_v, self.weight,
                 self.simulation_sampling.num_samples)
@@ -534,10 +537,15 @@ class Environment:
             self.solver.step()
             if self.save_visual and self.solver.t >= self.unit.from_real_time(
                     self.next_visual_frame_id * self.visual_real_interval):
+                self.visual_v2_scaled.set_from(self.solver.particle_cfl_v2)
+                self.visual_v2_scaled.scale(self.unit.to_real_velocity_mse(1))
                 self.visual_x_scaled.set_from(self.solver.particle_x,
                                               self.solver.num_particles)
                 self.visual_x_scaled.scale(self.unit.to_real_length(1))
                 if self.save_dir_visual is not None:
+                    self.visual_v2_scaled.write_file(
+                        f'{str(self.save_dir_visual)}/v2-{self.next_visual_frame_id}.alu',
+                        self.solver.num_particles)
                     self.visual_x_scaled.write_file(
                         f'{str(self.save_dir_visual)}/x-{self.next_visual_frame_id}.alu',
                         self.solver.num_particles)
