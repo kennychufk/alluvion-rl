@@ -26,9 +26,12 @@ parser.add_argument('pellets', metavar='p', type=str, nargs=1)
 parser.add_argument('stat', metavar='s', type=str, nargs=1)
 parser.add_argument('--display', metavar='d', type=bool, default=False)
 parser.add_argument('--save-all', type=bool, default=False)
+parser.add_argument('--save-final', type=bool, default=False)
 args = parser.parse_args()
 
 particle_output_dir = '/home/kennychufk/workspace/pythonWs/vis-opt-particles'
+if args.save_final:
+    particle_output_dir = '/home/kennychufk/workspace/pythonWs/vis-opt-particles-final'
 
 
 class TemporalStat:
@@ -50,7 +53,7 @@ class TemporalStat:
 
 
 def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
-                              is_grad_eval, acc, ts):
+                              is_grad_eval, acc, ts, iteration):
     osampling.reset()
     tstat = TemporalStat()
     cn.gravity = dp.f3(0, acc, 0)
@@ -73,6 +76,8 @@ def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
     solver.num_particles = initial_particle_x.get_shape()[0]
     step_id = 0
     output_label = f'{param[0]}-{param[1]}-{is_grad_eval}'
+    if args.save_final:
+        output_label = f'{iteration}-{output_label}'
     checkpoint_step_ids = np.zeros(len(ts), np.int32)
     while osampling.sampling_cursor < len(ts):
         reached_checkpoint = pressurize(dp,
@@ -81,7 +86,8 @@ def evaluate_hagen_poiseuille(dp, solver, initial_particle_x, osampling, param,
                                         sample_process=True)
         if reached_checkpoint:
             checkpoint_step_ids[osampling.sampling_cursor - 1] = step_id
-        if args.save_all:
+        if args.save_all or (reached_checkpoint and args.save_final
+                             and not is_grad_eval):
             scaled_particle.set_from(solver.particle_x, solver.num_particles)
             scaled_particle.scale(unit.to_real_length(1))
             scaled_particle.write_file(
@@ -140,14 +146,15 @@ def compute_ground_truth(osampling, pipe_radius, ts, accelerations,
 
 
 def simulate(param, is_grad_eval, dp, solver, osampling, initial_particle_x,
-             pipe_radius, ts, accelerations, kinematic_viscosity):
+             pipe_radius, ts, accelerations, kinematic_viscosity, iteration):
     simulated = np.zeros((len(accelerations), len(ts), osampling.num_rs))
     summary = []
     for acc_id, acc in enumerate(accelerations):
         result, tstat = evaluate_hagen_poiseuille(dp, solver,
                                                   initial_particle_x,
                                                   osampling, param,
-                                                  is_grad_eval, acc, ts)
+                                                  is_grad_eval, acc, ts,
+                                                  iteration)
         simulated[acc_id] = result
         summary.append(tstat)
     return simulated, summary
@@ -267,6 +274,8 @@ def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
     num_iterations = 200
     if args.save_all:
         num_iterations = 1
+    if args.save_final:
+        num_iterations = 2000
     for iteration in range(num_iterations):
         with open('switch', 'r') as f:
             if f.read(1) == '0':
@@ -275,7 +284,7 @@ def optimize(dp, solver, adam, param0, initial_particle_x, unit, pipe_radius,
         x, loss, grad, simulated, summary = adam.update(
             simulate, ground_truth, mse_loss, x, x * 1e-2, dp, solver,
             osampling, initial_particle_x, pipe_radius, ts, accelerations,
-            kinematic_viscosity)
+            kinematic_viscosity, iteration)
         if (loss < best_loss):
             best_loss = loss
             wandb.summary['best_loss'] = best_loss
@@ -448,7 +457,7 @@ initial_particle_x = dp.create((num_particles), 3)
 initial_particle_x.read_file(args.pos[0])
 param0 = unit.from_real_kinematic_viscosity(
     np.array([2.07555972188988, 4.024484458097265])) * kinematic_viscosity_real
-if args.save_all:
+if args.save_all or args.save_final:
     scaled_particle = dp.create_coated_like(initial_particle_x)
     param0 = unit.from_real_kinematic_viscosity(np.array(
         [2.5, 3.5])) * kinematic_viscosity_real
