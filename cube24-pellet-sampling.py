@@ -20,7 +20,7 @@ density0 = 1
 volume_relative_to_cube = 0.8
 particle_mass = volume_relative_to_cube * kernel_radius * kernel_radius * kernel_radius * 0.125 * density0
 
-unit = Unit(real_kernel_radius=2**-8,
+unit = Unit(real_kernel_radius=0.011,
             real_density0=1000,
             real_gravity=-9.80665)
 
@@ -62,7 +62,7 @@ cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
 fill_mode = 2
-fill_particle_radius = particle_radius * 0.96
+fill_particle_radius = particle_radius * 0.98
 fill_margin = 1
 fill_domain_min = domain_min - kernel_radius * fill_margin
 fill_domain_max = domain_max + kernel_radius * fill_margin
@@ -123,5 +123,5 @@ for fill_step_id in range(300):
 
 dp.map_graphical_pointers()
 # solver.particle_x.write_file("box-40-30-15-shell.alu", solver.num_particles)
-solver.particle_x.write_file("cube24-2to-8.alu", solver.num_particles)
+solver.particle_x.write_file("cube24-0.011.alu", solver.num_particles)
 dp.unmap_graphical_pointers()

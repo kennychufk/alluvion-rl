@@ -45,7 +45,7 @@ agitator_options = [
     '03513137/91c0193d38f0c5338c9affdacaf55648',
 ]
 
-container_pellet_filename = '/home/kennychufk/workspace/pythonWs/alluvion-optim/cube24-2to-8.alu'
+container_pellet_filename = f'{args.shape_dir}/cube24/cube24/models/cube24-2to-8.alu'
 container_num_pellets = dp.get_alu_info(container_pellet_filename)[0][0]
 num_pellets = container_num_pellets
 
@@ -146,12 +146,13 @@ print('grid_offset', cni.grid_offset)
 
 target_t = unit.from_real_time(10)
 offset_y_interval = 0.001
+tenth_second_frame_id = np.argmax(interpolator.t > 10)
 for agitator_id in agitator_ids:
     offset_y_min = 0.24 * -0.5 - np.min(
-        interpolator.x[:, 1]) - unit.to_real_length(
+        interpolator.x[:tenth_second_frame_id, 1]) - unit.to_real_length(
             agitator_min_ys[agitator_id])
     offset_y_max = 0.24 * 0.5 - np.max(
-        interpolator.x[:, 1]) - unit.to_real_length(
+        interpolator.x[:tenth_second_frame_id, 1]) - unit.to_real_length(
             agitator_max_ys[agitator_id])
     print('offset_y_min', offset_y_min)
     print('offset_y_max', offset_y_max)

@@ -44,7 +44,8 @@ agitator_option = np.load(f'{args.truth_dir}/agitator_option.npy').item()
 agitator_model_dir = f'{args.shape_dir}/{agitator_option}/models'
 agitator_mesh_filename = f'{agitator_model_dir}/manifold2-decimate-2to-8.obj'
 agitator_mesh.set_obj(agitator_mesh_filename)
-agitator_mesh.scale(original_kernel_radius)  # NOTE: the loaded scale is not in real units
+agitator_mesh.scale(
+    original_kernel_radius)  # NOTE: the loaded scale is not in real units
 agitator_triangle_mesh = dp.TriangleMesh()
 agitator_mesh.copy_to(agitator_triangle_mesh)
 agitator_distance = dp.MeshDistance.create(
@@ -66,7 +67,7 @@ agitator_id = pile.add(agitator_distance,
                        display_mesh=agitator_mesh)
 
 sampling = FluidSample(dp, f'{args.truth_dir}/sample-x.alu')
-mask = dp.create_coated((sampling.num_samples), 1, np.uint32)
+mask = dp.create_coated((sampling.num_samples), 1)
 zero3 = dp.create_coated_like(sampling.sample_data3)
 zero3.set_zero()
 
@@ -78,32 +79,9 @@ for frame_id in range(args.num_frames):
     pile.read_file(f'{args.truth_dir}/{frame_id}.pile')
     sampling.sample_data1.read_file(f'{args.truth_dir}/density-{frame_id}.alu')
     sampling.sample_data3.read_file(f'{args.truth_dir}/v-{frame_id}.alu')
-    runner.launch_compute_density_mask(sampling.sample_data1, mask,
-                                       sampling.num_samples)
-    for i in range(num_buoys):
-        pile.compute_mask(i + 1, 0, sampling.sample_x, mask,
-                          sampling.num_samples)
+    mask.fill(1)
     pile.compute_mask(num_buoys + 1, 0, sampling.sample_x, mask,
                       sampling.num_samples)
 
-    mask.write_file(f'{args.truth_dir}/mask-{frame_id}.alu',
+    mask.write_file(f'{args.truth_dir}/mask-{frame_id}.ver1.alu',
                     sampling.num_samples)
-    v_norm_sqr = runner.calculate_mse_masked(sampling.sample_data3, zero3,
-                                             mask, sampling.num_samples)
-    v_norm = runner.calculate_mae_masked(sampling.sample_data3, zero3, mask,
-                                         sampling.num_samples)
-    # print('v_norm_sqr', v_norm_sqr, mask.get())
-    if v_norm_sqr > max_v_norm_sqr:
-        max_v_norm_sqr = v_norm_sqr
-    if v_norm > max_v_norm:
-        max_v_norm = v_norm
-    sum_v_norm_sqr += v_norm_sqr
-    sum_v_norm += v_norm
-print('max_v2', max_v_norm_sqr)
-print('sum_v2', sum_v_norm_sqr)
-print('max_v', max_v_norm)
-print('sum_v', sum_v_norm)
-np.save(f'{args.truth_dir}/sum_v2.npy', sum_v_norm_sqr)
-np.save(f'{args.truth_dir}/max_v2.npy', max_v_norm_sqr)
-np.save(f'{args.truth_dir}/sum_v.npy', sum_v_norm)
-np.save(f'{args.truth_dir}/max_v.npy', max_v_norm)

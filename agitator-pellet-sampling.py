@@ -34,11 +34,11 @@ agitator_options = [
     '03513137/91c0193d38f0c5338c9affdacaf55648',
     '03636649/83353863ea1349682ebeb1e6a8111f53'
 ]
-agitator_option = agitator_options[0]
+agitator_option = agitator_options[10]
 # 6, 7, 8, 10 problematic
 shape_dir = '/home/kennychufk/workspace/pythonWs/shape-al'
 agitator_model_dir = f'{shape_dir}/{agitator_option}/models'
-agitator_mesh_filename = f'{agitator_model_dir}/manifold2-decimate-r.005.obj'
+agitator_mesh_filename = f'{agitator_model_dir}/manifold2-decimate-2to-8.obj'
 
 pile = dp.Pile(dp,
                runner,
@@ -136,8 +136,8 @@ for fill_step_id in range(300):
 
 dp.map_graphical_pointers()
 solver.particle_x.write_file(
-    f'{agitator_model_dir}/manifold2-decimate-r.005.alu', solver.num_particles)
-with open(f'{agitator_model_dir}/manifold2-decimate-r.005.fill-r.txt',
+    f'{agitator_model_dir}/manifold2-decimate-2to-8.alu', solver.num_particles)
+with open(f'{agitator_model_dir}/manifold2-decimate-2to-8.fill-r.txt',
           'w') as f:
     f.write(f"{fill_particle_radius}")
 dp.unmap_graphical_pointers()

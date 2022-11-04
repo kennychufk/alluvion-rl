@@ -221,12 +221,12 @@ trajectory_option = trajectory_options[np.random.randint(
     low=0, high=len(trajectory_options))]
 trajectory_option = f'{args.shape_dir}/{trajectory_option}'
 
-agitator_offset = get_agitator_offset(trajectory_option, agitator_option)
+# agitator_offset = get_agitator_offset(trajectory_option, agitator_option)
 
 interpolator = LeapInterpolator(dp,
                                 trajectory_option,
                                 b_spline_knots=profile["b_spline_knots"],
-                                offset=agitator_offset)
+                                offset=np.array([0, -0.12, 0]))
 pile.x[agitator_id] = unit.from_real_length(interpolator.get_x(0))
 pile.q[agitator_id] = interpolator.get_q(0)
 dp.remove(agitator_pellet_x)
