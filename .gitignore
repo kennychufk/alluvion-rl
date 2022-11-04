@@ -143,3 +143,4 @@ switch
 wandb/
 .alcache
 val-*
+*.pgf
