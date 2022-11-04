@@ -1,4 +1,5 @@
 import subprocess
+import argparse
 import os
 
 import numpy as np
@@ -14,12 +15,19 @@ from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib import cm
 
+parser = argparse.ArgumentParser(description='Hagen poiseuille plotting')
+parser.add_argument('--scene-dir', type=str, required=True)
+parser.add_argument('--sequence-label', type=str, required=True)
+parser.add_argument('--plot-optimized', type=bool, default=False)
+args = parser.parse_args()
+
 matplotlib.use('Agg')
 
 plt.rcParams.update({'font.size': 22})
 
-scene_dir = '/home/kennychufk/workspace/pythonWs/vis-opt-particles'
-sequence_label = '0.006386599135621174-0.008941238789869644-False'
+scene_dir = args.scene_dir
+sequence_label = args.sequence_label
+plot_optimized = args.plot_optimized
 
 unit = Unit(real_kernel_radius=0.0025,
             real_density0=1000,
@@ -83,36 +91,28 @@ for step_id in range(-1, num_steps + 2):
     # ax_box.patch.set_color('white')
 
     ax = fig.add_axes([0.61, 0.3, 0.3, 0.3])  #left, bottom, width, height
+    time_label_pos_list = [(0.5, 0.010), (0.5, 0.0235), (0.5, 0.030)]
 
     for acc_id, acc in enumerate(accelerations):
         ax.set_title(f'Velocity Profile', y=1.04)
 
         if not plot_error:
             for t_id, t in enumerate(ts):
-                ax.plot(rs_scaled,
-                        unit.to_real_velocity(ground_truth[acc_id][t_id]) *
-                        scale_velocity,
-                        c=cmap(t_id),
-                        linewidth=4,
-                        alpha=0.3)
-            ax.annotate(r"$t=" + f"{unit.to_real_time(ts[2]):.2f}" + r"$s",
-                        xy=(0.5, 0.030),
-                        xycoords='data',
-                        bbox=dict(boxstyle="round,pad=0.2",
-                                  facecolor="white",
-                                  edgecolor=cmap(2)))
-            ax.annotate(r"$t=" + f"{unit.to_real_time(ts[1]):.2f}" + r"$s",
-                        xy=(0.5, 0.0235),
-                        xycoords='data',
-                        bbox=dict(boxstyle="round,pad=0.2",
-                                  facecolor="white",
-                                  edgecolor=cmap(1)))
-            ax.annotate(r"$t=" + f"{unit.to_real_time(ts[0]):.2f}" + r"$s",
-                        xy=(0.5, 0.010),
-                        xycoords='data',
-                        bbox=dict(boxstyle="round,pad=0.2",
-                                  facecolor="white",
-                                  edgecolor=cmap(0)))
+                checkpoint_step_id = checkpoint_step_ids[t_id]
+                if step_id >= checkpoint_step_id or not plot_optimized:
+                    ax.plot(rs_scaled,
+                            unit.to_real_velocity(ground_truth[acc_id][t_id]) *
+                            scale_velocity,
+                            c=cmap(t_id),
+                            linewidth=4,
+                            alpha=0.3)
+                    ax.annotate(r"$t=" + f"{unit.to_real_time(ts[t_id]):.2f}" +
+                                r"$s",
+                                xy=time_label_pos_list[t_id],
+                                xycoords='data',
+                                bbox=dict(boxstyle="round,pad=0.2",
+                                          facecolor="white",
+                                          edgecolor=cmap(t_id)))
 
             if step_id >= 0 and step_id < num_steps:
                 vx_scaled = unit.to_real_velocity(
@@ -138,7 +138,8 @@ for step_id in range(-1, num_steps + 2):
                                 scale_velocity,
                                 c=cmap(t_id),
                                 label=f"{unit.to_real_time(t):.2f}s")
-                line.set_visible(step_id >= checkpoint_step_id)
+                line.set_visible(step_id >= checkpoint_step_id
+                                 and not plot_optimized)
 
         else:
             for t_id, t in enumerate(ts):
@@ -163,7 +164,7 @@ for step_id in range(-1, num_steps + 2):
                alpha=0.3,
                label='Theoretical')
     ]
-    if not plot_error:
+    if not plot_error and not plot_optimized:
         ax.legend(handles=line_type_legends)
 
     if step_id < 0:
