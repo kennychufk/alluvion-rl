@@ -9,7 +9,7 @@ from numpy import linalg as LA
 from pathlib import Path
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from optim import AdamOptim
-from util import Unit, OptimSamplingPellets
+from util import Unit, OptimSamplingPellets, parameterize_kinematic_viscosity_with_pellets
 from analytic import approximate_half_life, developing_hagen_poiseuille, acceleration_from_terminal_velocity, calculate_terminal_velocity, pressurize
 
 import matplotlib
@@ -27,9 +27,12 @@ parser.add_argument('stat', metavar='s', type=str, nargs=1)
 parser.add_argument('--display', metavar='d', type=bool, default=False)
 parser.add_argument('--save-all', type=bool, default=False)
 parser.add_argument('--save-final', type=bool, default=False)
+parser.add_argument('--use-optimized', type=bool, default=False)
 args = parser.parse_args()
 
 particle_output_dir = '/home/kennychufk/workspace/pythonWs/vis-opt-particles'
+if args.use_optimized:
+    particle_output_dir = '/home/kennychufk/workspace/pythonWs/vis-opt-particles-optimized'
 if args.save_final:
     particle_output_dir = '/home/kennychufk/workspace/pythonWs/vis-opt-particles-final'
 
@@ -461,6 +464,10 @@ if args.save_all or args.save_final:
     scaled_particle = dp.create_coated_like(initial_particle_x)
     param0 = unit.from_real_kinematic_viscosity(np.array(
         [2.5, 3.5])) * kinematic_viscosity_real
+    if args.use_optimized:
+        param0 = unit.from_real_kinematic_viscosity(
+            parameterize_kinematic_viscosity_with_pellets(
+                kinematic_viscosity_real))
 adam = AdamOptim(param0, lr=2e-4)
 
 old_filenames = glob.glob('.alcache/*.mp4') + glob.glob('.alcache/*.png')
