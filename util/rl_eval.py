@@ -8,7 +8,7 @@ from .policy_codec import get_action_dim, get_state_dim
 
 def eval_agent(eval_env,
                agent,
-               result_dict,
+               episode_info,
                report_state_action=False,
                run_id=None,
                model_iteration=None):
@@ -18,6 +18,8 @@ def eval_agent(eval_env,
     all_episodes_mask_accm = 0
     episode_error_accm = 0
     episode_truth_accm = 0
+    volumetric_error_accm = 0
+    volumetric_baseline_accm = 0
     within_t_mean_error = 0
     within_t_mean_truth = 0
     for _ in range(len(eval_env.truth_dirs)):
@@ -50,21 +52,32 @@ def eval_agent(eval_env,
                 sim_v_history[
                     cursor] = eval_env.simulation_sampling.sample_data3.get()
                 cursor += 1
-            state, reward, done, info = eval_env.step(real_action)
-            all_episodes_error_accm += info['v_error']
-            episode_error_accm += info['v_error']
-            episode_truth_accm += info['truth_sqr']
-            all_episodes_mask_accm += info['num_masked']
-            if info['num_masked'] > 0:
-                within_t_mean_error += info['v_error'] / info['num_masked']
-                within_t_mean_truth += info['truth_sqr'] / info['num_masked']
+            state, reward, done, step_info = eval_env.step(real_action)
+            all_episodes_error_accm += step_info['v_error']
+            episode_error_accm += step_info['v_error']
+            episode_truth_accm += step_info['truth_sqr']
+            all_episodes_mask_accm += step_info['num_masked']
+            if step_info['num_masked'] > 0:
+                within_t_mean_error += step_info['v_error'] / step_info[
+                    'num_masked']
+                within_t_mean_truth += step_info['truth_sqr'] / step_info[
+                    'num_masked']
+            if 'volumetric_error' in step_info:
+                volumetric_error_accm += step_info['volumetric_error']
+                volumetric_baseline_accm += step_info['volumetric_baseline']
 
-        result_dict[
+        episode_info[
             f'{eval_env.num_buoys}-{dirname_short}%'] = episode_error_accm / episode_truth_accm
-        result_dict[
+        episode_info[
             f'{eval_env.num_buoys}-{dirname_short}m%'] = within_t_mean_error / within_t_mean_truth
+        if volumetric_baseline_accm > 0:
+            episode_info[
+                f'{eval_env.num_buoys}-vol%'] = volumetric_error_accm / volumetric_baseline_accm
+            episode_info[f'{eval_env.num_buoys}-vol'] = volumetric_error_accm
         episode_error_accm = 0
         episode_truth_accm = 0
+        volumetric_error_accm = 0
+        volumetric_baseline_accm = 0
         if (report_state_action):
             np.save(f'{str(report_save_dir)}/state.npy', state_history)
             np.save(f'{str(report_save_dir)}/action.npy', action_history)

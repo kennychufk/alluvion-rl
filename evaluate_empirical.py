@@ -10,6 +10,7 @@ from util import Environment, EnvironmentPIV, eval_agent
 parser = argparse.ArgumentParser(description='RL evaluation')
 parser.add_argument('--cache-dir', type=str, default='.')
 parser.add_argument('--truth-dir', type=str, required=True)
+parser.add_argument('--shape-dir', type=str, default=None)
 parser.add_argument('--display', type=bool, default=False)
 parser.add_argument('--run-id', type=str, required=True)
 parser.add_argument('--model-iteration', type=int, default=-1)
@@ -49,7 +50,8 @@ val_dirs = [
 #                        cache_dir=args.cache_dir,
 #                        ma_alphas=config['ma_alphas'],
 #                        display=args.display,
-#                        save_visual=True)
+#                        save_visual=False,
+#                        shape_dir=args.shape_dir)
 
 piv_truth_dirs = [
     '/media/kennychufk/vol1bk0/20210415_162749-laser-too-high/',
@@ -88,29 +90,36 @@ if args.model_iteration < 0:
                 log_object[key] = row[key]
         if episode_id % 50 == 0:
             agent.load_models(f'artifacts/{args.run_id}/models/{episode_id}/')
-            result_dict = {}
-            # log_object['val-again'] = eval_agent(eval_env, agent, result_dict)
+            episode_info = {}
+            # log_object['val-again'] = eval_agent(eval_env,
+            #                                      agent,
+            #                                      episode_info,
+            #                                      report_state_action=False,
+            #                                      run_id=args.run_id,
+            #                                      model_iteration=episode_id)
             log_object['val-piv'] = eval_agent(env_piv,
                                                agent,
-                                               result_dict,
-                                               report_state_action=False)
-            for result_key in result_dict:
+                                               episode_info,
+                                               report_state_action=False,
+                                               run_id=args.run_id,
+                                               model_iteration=episode_id)
+            for result_key in episode_info:
                 if (result_key != 'truth_sqr') and (key != 'num_masked'):
-                    log_object[result_key] = result_dict[result_key]
+                    log_object[result_key] = episode_info[result_key]
         wandb.log(log_object)
 else:
     agent.load_models(
         f'artifacts/{args.run_id}/models/{args.model_iteration}/')
-    result_dict = {}
+    episode_info = {}
     eval_agent(env_piv,
                agent,
-               result_dict,
+               episode_info,
                report_state_action=True,
                run_id=args.run_id,
                model_iteration=args.model_iteration)
     # eval_agent(eval_env,
     #            agent,
-    #            result_dict,
+    #            episode_info,
     #            report_state_action=True,
     #            run_id=args.run_id,
     #            model_iteration=args.model_iteration)

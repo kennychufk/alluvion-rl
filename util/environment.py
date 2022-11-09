@@ -2,6 +2,7 @@ import sys
 import math
 import random
 import alluvion as al
+import alluvol
 import numpy as np
 import torch
 
@@ -43,7 +44,7 @@ class Environment:
         return max_num_beads
 
     def get_truth_num_beads(self, truth_dir):
-        return self.dp.get_alu_info(f'{truth_dir}/v2-0.alu')[0][0]
+        return np.load(f'{truth_dir}/num_particles.npy').item()
 
     def find_truth_max_num_beads(self):
         max_num_beads = 0
@@ -75,7 +76,8 @@ class Environment:
                  display,
                  volume_method=al.VolumeMethod.pellets,
                  save_visual=False,
-                 reward_option=0):
+                 reward_option=0,
+                 shape_dir=None):
         self.dp = dp
         self.cn, self.cni = self.dp.create_cn()
         self.display = display
@@ -129,6 +131,9 @@ class Environment:
                                  max_num_pellets=container_num_pellets,
                                  cn=self.cn,
                                  cni=self.cni)
+        self.shape_dir = shape_dir
+        self.recon_raster_radius = self.unit.rl * 0.36
+        self.recon_voxel_size = self.recon_raster_radius / np.sqrt(3.0)
 
         ## ================== container
         self.container_width = self.unit.from_real_length(0.24)
@@ -180,7 +185,6 @@ class Environment:
         self.cni.max_num_neighbors_per_particle = 64
 
         self._max_episode_steps = 1000
-        self._reward_delay = 0
         self.solver = self.dp.SolverI(self.runner,
                                       self.pile,
                                       self.dp,
@@ -212,7 +216,6 @@ class Environment:
                                                    1, np.uint32)
         self.histogram_truth = self.dp.create_coated(
             (al.kHistogram256BinCount), 1, np.uint32)
-        self.bead_v = self.dp.create_coated((self.solver.max_num_particles), 3)
         self.bead_v_component = self.dp.create_coated(
             (self.solver.max_num_particles), 1)
         self.particle_v_truth = self.dp.create_coated((truth_max_num_beads), 1)
@@ -309,6 +312,18 @@ class Environment:
             for trajectory in buoy_trajectories
         ]
 
+    def reset_volumetric(self):
+        if self.shape_dir is not None:
+            agitator_option = np.load(
+                f'{self.truth_dir}/agitator_option.npy').item()
+            self.agitator_ls = alluvol.create_mesh_level_set(
+                f'{self.shape_dir}/{agitator_option}/models/manifold2-decimate-pa-dilate.obj',
+                self.recon_voxel_size)
+            baseline_x = self.unit.to_real_length(
+                self.dp.coat(self.solver.particle_x).get())
+            self.baseline_ls = alluvol.create_liquid_level_set(
+                baseline_x, self.recon_raster_radius, self.recon_voxel_size)
+
     def reset_solver_properties(self):
         self.real_density0 = np.load(f'{self.truth_dir}/density0_real.npy')
         self.unit = Unit(real_kernel_radius=self.unit.rl,
@@ -361,6 +376,7 @@ class Environment:
         self.reset_buoy_interpolators()
         self.reset_solver_properties()
         self.reset_solver_initial()
+        self.reset_volumetric()
         self.dp.copy_cn_external(self.cn, self.cni)
 
         self.dp.map_graphical_pointers()
@@ -411,13 +427,45 @@ class Environment:
                           self.coil_x_real, self.usher_sampling,
                           self.num_buoys)
 
+    def calculate_volumetric_error(self, episode_t, step_info):
+        truth_vdb_filename = f'{self.truth_dir}/x-{episode_t}-resampled6.vdb'
+        truth_ls = alluvol.FloatGrid.read(truth_vdb_filename)
+
+        recon_x = self.unit.to_real_length(
+            self.dp.coat(self.solver.particle_x).get(
+                self.solver.num_particles))
+        recon_ls = alluvol.create_liquid_level_set(recon_x,
+                                                   self.recon_raster_radius,
+                                                   self.recon_voxel_size)
+        xs, vs, qs, omegas = read_pile(f'{self.truth_dir}/{episode_t}.pile')
+        transformed_agitator_ls = alluvol.transform_level_set(
+            self.agitator_ls, alluvol.F3(xs[-1]), alluvol.F4(qs[-1]),
+            self.recon_voxel_size)
+
+        recon_sym_diff = alluvol.csgUnionCopy(truth_ls, recon_ls)
+        recon_intersection = alluvol.csgIntersectionCopy(truth_ls, recon_ls)
+        alluvol.csgDifference(recon_sym_diff, recon_intersection)
+        recon_error_ls = alluvol.csgDifferenceCopy(recon_sym_diff,
+                                                   transformed_agitator_ls)
+
+        baseline_sym_diff = alluvol.csgUnionCopy(truth_ls, self.baseline_ls)
+        baseline_intersection = alluvol.csgIntersectionCopy(
+            truth_ls, self.baseline_ls)
+        alluvol.csgDifference(baseline_sym_diff, baseline_intersection)
+        baseline_error_ls = alluvol.csgDifferenceCopy(baseline_sym_diff,
+                                                      transformed_agitator_ls)
+
+        # recon_ls.write_obj(f"volumetric-save/recon-{episode_t}.obj")
+        # recon_error_ls.write_obj(
+        #     f"volumetric-save/recon-error-{episode_t}.obj")
+        # baseline_error_ls.write_obj(
+        #     f"volumetric-save/baseline-error-{episode_t}.obj")
+        recon_error_ls.setGridClassAsLevelSet()
+        baseline_error_ls.setGridClassAsLevelSet()
+        step_info['volumetric_error'] = recon_error_ls.calculate_volume()
+        step_info['volumetric_baseline'] = baseline_error_ls.calculate_volume()
+
     def calculate_reward(self, episode_t):
-        if episode_t - self._reward_delay < 0:
-            result_obj = {}
-            result_obj['v_error'] = 0
-            result_obj['truth_sqr'] = 0
-            result_obj['num_masked'] = 0
-            return 0, result_obj
         if self.reward_option == 0:
             self.simulation_sampling.prepare_neighbor_and_boundary(
                 self.runner, self.solver)
@@ -426,10 +474,7 @@ class Environment:
             simulation_v_real.scale(self.unit.to_real_velocity(1))
 
             self.ground_truth_v.read_file(
-                f'{self.truth_dir}/v-{episode_t-self._reward_delay}.alu')
-            # self.weight.read_file(
-            #     f'{self.truth_dir}/density-weight-{episode_t-self._reward_delay}.alu'
-            # )
+                f'{self.truth_dir}/v-{episode_t}.alu')
             self.weight.fill(1)
             v_error = self.runner.calculate_se_weighted(
                 simulation_v_real, self.ground_truth_v, self.weight,
@@ -437,12 +482,12 @@ class Environment:
             truth_sqr = self.runner.calculate_se_weighted(
                 self.v_zero, self.ground_truth_v, self.weight,
                 self.simulation_sampling.num_samples)
-            result_obj = {}
-            result_obj['v_error'] = v_error
-            result_obj['truth_sqr'] = truth_sqr
-            result_obj['num_masked'] = self.runner.sum(
+            step_info = {}
+            step_info['v_error'] = v_error
+            step_info['truth_sqr'] = truth_sqr
+            step_info['num_masked'] = self.runner.sum(
                 self.weight, self.simulation_sampling.num_samples)
-            return -v_error / result_obj['num_masked'], result_obj
+            return -v_error / step_info['num_masked'], step_info
         else:
             # KL divergence
             self.bead_v_component.set_from(self.solver.particle_cfl_v2,
@@ -457,55 +502,8 @@ class Environment:
                                             self.bead_v_component, 0,
                                             max_v_bin,
                                             self.solver.num_particles)
-            # self.bead_v.set_from(self.solver.particle_v,
-            #                      self.solver.num_particles)
-            # self.bead_v.scale(self.unit.to_real_velocity(1))
-
-            # self.runner.extract_x(self.bead_v, self.bead_v_component,
-            #                       self.solver.num_particles)
-            # self.runner.launch_histogram256(self.partial_histogram,
-            #                                 self.histogram_sim,
-            #                                 self.quantized4s_sim,
-            #                                 self.bead_v_component, -max_v_bin,
-            #                                 max_v_bin,
-            #                                 self.solver.num_particles)
-            # self.histogram_truth.set(self.histogram_x_all[episode_t -
-            #                                               self._reward_delay])
-            # kl_div_x = self.runner.calculate_kl_divergence(
-            #     self.histogram_sim, self.histogram_truth,
-            #     self.solver.num_particles, self.truth_num_beads)
-
-            # self.runner.extract_y(self.bead_v, self.bead_v_component,
-            #                       self.solver.num_particles)
-            # self.runner.launch_histogram256(self.partial_histogram,
-            #                                 self.histogram_sim,
-            #                                 self.quantized4s_sim,
-            #                                 self.bead_v_component, -max_v_bin,
-            #                                 max_v_bin,
-            #                                 self.solver.num_particles)
-            # self.histogram_truth.set(self.histogram_y_all[episode_t -
-            #                                               self._reward_delay])
-            # kl_div_y = self.runner.calculate_kl_divergence(
-            #     self.histogram_sim, self.histogram_truth,
-            #     self.solver.num_particles, self.truth_num_beads)
-
-            # self.runner.extract_z(self.bead_v, self.bead_v_component,
-            #                       self.solver.num_particles)
-            # self.runner.launch_histogram256(self.partial_histogram,
-            #                                 self.histogram_sim,
-            #                                 self.quantized4s_sim,
-            #                                 self.bead_v_component, -max_v_bin,
-            #                                 max_v_bin,
-            #                                 self.solver.num_particles)
-            # self.histogram_truth.set(self.histogram_z_all[episode_t -
-            #                                               self._reward_delay])
-            # kl_div_z = self.runner.calculate_kl_divergence(
-            #     self.histogram_sim, self.histogram_truth,
-            #     self.solver.num_particles, self.truth_num_beads)
-
-            # kl_div = kl_div_x + kl_div_y + kl_div_z
             self.particle_v_truth.read_file(
-                f'{self.truth_dir}/v2-{episode_t-self._reward_delay}.alu')
+                f'{self.truth_dir}/v2-{episode_t}.alu')
             self.runner.sqrt_inplace(self.particle_v_truth,
                                      self.truth_num_beads)
             self.runner.launch_histogram256(self.partial_histogram,
@@ -516,11 +514,11 @@ class Environment:
             kl_div = self.runner.calculate_kl_divergence(
                 self.histogram_sim, self.histogram_truth,
                 self.solver.num_particles, self.truth_num_beads)
-            result_obj = {}
-            result_obj['v_error'] = kl_div
-            result_obj['truth_sqr'] = 0
-            result_obj['num_masked'] = 0
-            return -kl_div, result_obj
+            step_info = {}
+            step_info['v_error'] = kl_div
+            step_info['truth_sqr'] = 0
+            step_info['num_masked'] = 0
+            return -kl_div, step_info
 
     def step(self, action_aggregated_converted):
         if np.sum(np.isnan(action_aggregated_converted)) > 0:
@@ -549,17 +547,14 @@ class Environment:
                     self.visual_x_scaled.write_file(
                         f'{str(self.save_dir_visual)}/x-{self.next_visual_frame_id}.alu',
                         self.solver.num_particles)
-                    self.pile.write_file(
-                        f'{str(self.save_dir_visual)}/{self.next_visual_frame_id}.pile',
-                        self.unit.to_real_length(1),
-                        self.unit.to_real_velocity(1),
-                        self.unit.to_real_angular_velocity(1))
                 self.next_visual_frame_id += 1
 
         new_state_aggregated = self.collect_state(self.episode_t + 1)
 
         # find reward
-        reward, result_obj = self.calculate_reward(self.episode_t + 1)
+        reward, step_info = self.calculate_reward(self.episode_t + 1)
+        if self.shape_dir is not None:
+            self.calculate_volumetric_error(self.episode_t + 1, step_info)
         grid_anomaly = self.dp.coat(
             self.solver.grid_anomaly).get()[0]  # TODO: use sum
 
@@ -578,7 +573,7 @@ class Environment:
             done = True
         if self.episode_t == self._max_episode_steps - 1:
             done = True
-        return new_state_aggregated, reward, done, result_obj
+        return new_state_aggregated, reward, done, step_info
 
 
 class EnvironmentPIV(Environment):
@@ -688,31 +683,23 @@ class EnvironmentPIV(Environment):
         return buoys_x, buoys_v, buoys_q
 
     def calculate_reward(self, episode_t):
-        if episode_t - self._reward_delay < 0:
-            result_obj = {}
-            result_obj['v_error'] = 0
-            result_obj['truth_sqr'] = 0
-            result_obj['num_masked'] = 0
-            return 0, result_obj
         self.simulation_sampling.prepare_neighbor_and_boundary(
             self.runner, self.solver)
         simulation_v_real = self.simulation_sampling.sample_velocity(
             self.runner, self.solver)
         simulation_v_real.scale(self.unit.to_real_velocity(1))
 
-        self.ground_truth_v.set(self.truth_v_collection[episode_t -
-                                                        self._reward_delay])
-        self.weight.set(self.mask_collection[episode_t - self._reward_delay])
+        self.ground_truth_v.set(self.truth_v_collection[episode_t])
+        self.weight.set(self.mask_collection[episode_t])
         v_error = self.runner.calculate_se_yz_masked(
             simulation_v_real, self.ground_truth_v, self.weight,
             self.simulation_sampling.num_samples)
         truth_sqr = self.runner.calculate_se_yz_masked(
             self.v_zero, self.ground_truth_v, self.weight,
             self.simulation_sampling.num_samples)
-        result_obj = {}
-        result_obj['v_error'] = v_error
-        result_obj['truth_sqr'] = truth_sqr
-        result_obj['num_masked'] = np.sum(
-            self.mask_collection[episode_t - self._reward_delay])
+        step_info = {}
+        step_info['v_error'] = v_error
+        step_info['truth_sqr'] = truth_sqr
+        step_info['num_masked'] = np.sum(self.mask_collection[episode_t])
 
-        return -v_error, result_obj
+        return -v_error, step_info
