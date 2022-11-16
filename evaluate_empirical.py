@@ -50,7 +50,8 @@ val_dirs = [
 #                        cache_dir=args.cache_dir,
 #                        ma_alphas=config['ma_alphas'],
 #                        display=args.display,
-#                        save_visual=False,
+#                        save_visual=True,
+#                        evaluation_metrics=['eulerian_masked'],
 #                        shape_dir=args.shape_dir)
 
 piv_truth_dirs = [
@@ -91,21 +92,20 @@ if args.model_iteration < 0:
         if episode_id % 50 == 0:
             agent.load_models(f'artifacts/{args.run_id}/models/{episode_id}/')
             episode_info = {}
-            # log_object['val-again'] = eval_agent(eval_env,
-            #                                      agent,
-            #                                      episode_info,
-            #                                      report_state_action=False,
-            #                                      run_id=args.run_id,
-            #                                      model_iteration=episode_id)
-            log_object['val-piv'] = eval_agent(env_piv,
-                                               agent,
-                                               episode_info,
-                                               report_state_action=False,
-                                               run_id=args.run_id,
-                                               model_iteration=episode_id)
+            # eval_agent(eval_env,
+            #            agent,
+            #            episode_info,
+            #            report_state_action=False,
+            #            run_id=args.run_id,
+            #            model_iteration=episode_id)
+            eval_agent(env_piv,
+                       agent,
+                       episode_info,
+                       report_state_action=False,
+                       run_id=args.run_id,
+                       model_iteration=episode_id)
             for result_key in episode_info:
-                if (result_key != 'truth_sqr') and (key != 'num_masked'):
-                    log_object[result_key] = episode_info[result_key]
+                log_object[result_key] = episode_info[result_key]
         wandb.log(log_object)
 else:
     agent.load_models(
@@ -123,3 +123,4 @@ else:
     #            report_state_action=True,
     #            run_id=args.run_id,
     #            model_iteration=args.model_iteration)
+    print(episode_info)

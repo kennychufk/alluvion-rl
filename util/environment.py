@@ -76,7 +76,8 @@ class Environment:
                  display,
                  volume_method=al.VolumeMethod.pellets,
                  save_visual=False,
-                 reward_option=0,
+                 reward_metric='eulerian',
+                 evaluation_metrics=None,
                  shape_dir=None):
         self.dp = dp
         self.cn, self.cni = self.dp.create_cn()
@@ -88,7 +89,15 @@ class Environment:
         self.volume_method = volume_method
         self.cache_dir = cache_dir
         self.save_visual = save_visual
-        self.reward_option = reward_option
+
+        self.reward_metric = reward_metric
+        self.metrics = {}
+        if reward_metric is not None:
+            self.metrics[reward_metric] = 1
+        if evaluation_metrics is not None:
+            for metric in evaluation_metrics:
+                if metric != reward_metric:
+                    self.metrics[metric] = 0
 
         # === constants
         self.init_real_kernel_radius()
@@ -131,6 +140,9 @@ class Environment:
                                  max_num_pellets=container_num_pellets,
                                  cn=self.cn,
                                  cni=self.cni)
+        if "statistical" in self.metrics and shape_dir is None:
+            raise Exception(
+                "Statistical metric is needed but shape_dir is unspecified")
         self.shape_dir = shape_dir
         self.recon_raster_radius = self.unit.rl * 0.36
         self.recon_voxel_size = self.recon_raster_radius / np.sqrt(3.0)
@@ -209,20 +221,24 @@ class Environment:
         self.ground_truth_v = None
         self.v_zero = None
         self.weight = None
-        # KL Divergence
-        self.partial_histogram = self.dp.create_coated(
-            (al.kPartialHistogram256Size), 1, np.uint32)
-        self.histogram_sim = self.dp.create_coated((al.kHistogram256BinCount),
-                                                   1, np.uint32)
-        self.histogram_truth = self.dp.create_coated(
-            (al.kHistogram256BinCount), 1, np.uint32)
-        self.bead_v_component = self.dp.create_coated(
-            (self.solver.max_num_particles), 1)
-        self.particle_v_truth = self.dp.create_coated((truth_max_num_beads), 1)
-        self.quantized4s_sim = dp.create_coated(
-            ((self.solver.max_num_particles - 1) // 4 + 1), 1, np.uint32)
-        self.quantized4s_truth = dp.create_coated(
-            ((truth_max_num_beads - 1) // 4 + 1), 1, np.uint32)
+
+        if 'statistical' in self.metrics:
+            self.partial_histogram = self.dp.create_coated(
+                (al.kPartialHistogram256Size), 1, np.uint32)
+            self.histogram_baseline = self.dp.create_coated(
+                (al.kHistogram256BinCount), 1, np.uint32)
+            self.histogram_sim = self.dp.create_coated(
+                (al.kHistogram256BinCount), 1, np.uint32)
+            self.histogram_truth = self.dp.create_coated(
+                (al.kHistogram256BinCount), 1, np.uint32)
+            self.bead_v_sim = self.dp.create_coated(
+                (self.solver.max_num_particles), 1)
+            self.bead_v_truth = self.dp.create_coated((truth_max_num_beads), 1)
+            self.quantized4s_sim = dp.create_coated(
+                ((self.solver.max_num_particles - 1) // 4 + 1), 1, np.uint32)
+            self.quantized4s_truth = dp.create_coated(
+                ((truth_max_num_beads - 1) // 4 + 1), 1, np.uint32)
+            self.max_v_bin = 0.25
 
         self.truth_real_freq = 100.0
         self.truth_real_interval = 1.0 / self.truth_real_freq
@@ -313,7 +329,7 @@ class Environment:
         ]
 
     def reset_volumetric(self):
-        if self.shape_dir is not None:
+        if 'volumetric' in self.metrics:
             agitator_option = np.load(
                 f'{self.truth_dir}/agitator_option.npy').item()
             self.agitator_ls = alluvol.create_mesh_level_set(
@@ -323,6 +339,17 @@ class Environment:
                 self.dp.coat(self.solver.particle_x).get())
             self.baseline_ls = alluvol.create_liquid_level_set(
                 baseline_x, self.recon_raster_radius, self.recon_voxel_size)
+
+    def reset_statistical(self):
+        if 'statistical' in self.metrics:
+            self.runner.norm(self.solver.particle_v, self.bead_v_sim,
+                             self.solver.num_particles)
+            self.bead_v_sim.scale(self.unit.to_real_velocity(1))
+            self.runner.launch_histogram256(self.partial_histogram,
+                                            self.histogram_baseline,
+                                            self.quantized4s_sim,
+                                            self.bead_v_sim, 0, self.max_v_bin,
+                                            self.solver.num_particles)
 
     def reset_solver_properties(self):
         self.real_density0 = np.load(f'{self.truth_dir}/density0_real.npy')
@@ -376,14 +403,16 @@ class Environment:
         self.reset_buoy_interpolators()
         self.reset_solver_properties()
         self.reset_solver_initial()
+        # reward/score related
         self.reset_volumetric()
+        self.reset_statistical()
         self.dp.copy_cn_external(self.cn, self.cni)
 
         self.dp.map_graphical_pointers()
-        state_aggregated = self.collect_state(0)
+        state = self.collect_state(0)
         self.dp.unmap_graphical_pointers()
         self.episode_t = 0
-        return state_aggregated
+        return state
 
     def get_buoy_kinematics_real(self, episode_t):
         t_real = episode_t * self.truth_real_interval
@@ -427,7 +456,7 @@ class Environment:
                           self.coil_x_real, self.usher_sampling,
                           self.num_buoys)
 
-    def calculate_volumetric_error(self, episode_t, step_info):
+    def calculate_volumetric_error(self, episode_t):
         truth_vdb_filename = f'{self.truth_dir}/x-{episode_t}-resampled6.vdb'
         truth_ls = alluvol.FloatGrid.read(truth_vdb_filename)
 
@@ -462,72 +491,90 @@ class Environment:
         #     f"volumetric-save/baseline-error-{episode_t}.obj")
         recon_error_ls.setGridClassAsLevelSet()
         baseline_error_ls.setGridClassAsLevelSet()
-        step_info['volumetric_error'] = recon_error_ls.calculate_volume()
-        step_info['volumetric_baseline'] = baseline_error_ls.calculate_volume()
+        error = recon_error_ls.calculate_volume()
+        baseline = baseline_error_ls.calculate_volume()
+        return error, baseline, 1
+
+    def calculate_eulerian_error(self, episode_t, use_mask=False):
+        self.simulation_sampling.prepare_neighbor_and_boundary(
+            self.runner, self.solver)
+        simulation_v_real = self.simulation_sampling.sample_velocity(
+            self.runner, self.solver)
+        simulation_v_real.scale(self.unit.to_real_velocity(1))
+
+        self.ground_truth_v.read_file(f'{self.truth_dir}/v-{episode_t}.alu')
+        if use_mask:
+            self.weight.read_file(
+                f'{self.truth_dir}/density-weight-{episode_t}.alu')
+        else:
+            self.weight.fill(1)
+        error = self.runner.calculate_se_weighted(
+            simulation_v_real, self.ground_truth_v, self.weight,
+            self.simulation_sampling.num_samples)
+        baseline = self.runner.calculate_se_weighted(
+            self.v_zero, self.ground_truth_v, self.weight,
+            self.simulation_sampling.num_samples)
+        num_samples = self.runner.sum(self.weight,
+                                      self.simulation_sampling.num_samples)
+        return error, baseline, num_samples
+
+    def calculate_eulerian_masked_error(self, episode_t):
+        return self.calculate_eulerian_error(episode_t, use_mask=True)
+
+    def calculate_statistical_error(self, episode_t):
+        self.bead_v_sim.set_from(self.solver.particle_cfl_v2,
+                                 self.solver.num_particles)
+        self.runner.sqrt_inplace(self.bead_v_sim, self.solver.num_particles)
+        self.bead_v_sim.scale(self.unit.to_real_velocity(1))
+        self.runner.launch_histogram256(self.partial_histogram,
+                                        self.histogram_sim,
+                                        self.quantized4s_sim, self.bead_v_sim,
+                                        0, self.max_v_bin,
+                                        self.solver.num_particles)
+        self.bead_v_truth.read_file(f'{self.truth_dir}/v2-{episode_t}.alu')
+        self.runner.sqrt_inplace(self.bead_v_truth, self.truth_num_beads)
+        self.runner.launch_histogram256(self.partial_histogram,
+                                        self.histogram_truth,
+                                        self.quantized4s_truth,
+                                        self.bead_v_truth, 0, self.max_v_bin,
+                                        self.truth_num_beads)
+        error = self.runner.calculate_kl_divergence(self.histogram_sim,
+                                                    self.histogram_truth,
+                                                    self.solver.num_particles,
+                                                    self.truth_num_beads)
+        baseline = self.runner.calculate_kl_divergence(
+            self.histogram_baseline, self.histogram_truth,
+            self.solver.num_particles, self.truth_num_beads)
+        return error, baseline, 1
 
     def calculate_reward(self, episode_t):
-        if self.reward_option == 0:
-            self.simulation_sampling.prepare_neighbor_and_boundary(
-                self.runner, self.solver)
-            simulation_v_real = self.simulation_sampling.sample_velocity(
-                self.runner, self.solver)
-            simulation_v_real.scale(self.unit.to_real_velocity(1))
+        step_info = {}
+        reward = 0
+        for i, metric in enumerate(self.metrics):
+            if metric == "eulerian":
+                error_fn = self.calculate_eulerian_error
+            elif metric == "eulerian_masked":
+                error_fn = self.calculate_eulerian_masked_error
+            elif metric == "statistical":
+                error_fn = self.calculate_statistical_error
+            else:
+                raise Exception(f"Unrecognized metric: {metric}")
+            error, baseline, num_samples = error_fn(episode_t)
+            step_info[metric + "_error"] = error
+            step_info[metric + "_baseline"] = baseline
+            step_info[metric + "_num_samples"] = num_samples
+            if self.metrics[metric] > 0:
+                reward = -error / num_samples
+        return reward, step_info
 
-            self.ground_truth_v.read_file(
-                f'{self.truth_dir}/v-{episode_t}.alu')
-            self.weight.fill(1)
-            v_error = self.runner.calculate_se_weighted(
-                simulation_v_real, self.ground_truth_v, self.weight,
-                self.simulation_sampling.num_samples)
-            truth_sqr = self.runner.calculate_se_weighted(
-                self.v_zero, self.ground_truth_v, self.weight,
-                self.simulation_sampling.num_samples)
-            step_info = {}
-            step_info['v_error'] = v_error
-            step_info['truth_sqr'] = truth_sqr
-            step_info['num_masked'] = self.runner.sum(
-                self.weight, self.simulation_sampling.num_samples)
-            return -v_error / step_info['num_masked'], step_info
-        else:
-            # KL divergence
-            self.bead_v_component.set_from(self.solver.particle_cfl_v2,
-                                           self.solver.num_particles)
-            self.runner.sqrt_inplace(self.bead_v_component,
-                                     self.solver.num_particles)
-            self.bead_v_component.scale(self.unit.to_real_velocity(1))
-            max_v_bin = 0.25
-            self.runner.launch_histogram256(self.partial_histogram,
-                                            self.histogram_sim,
-                                            self.quantized4s_sim,
-                                            self.bead_v_component, 0,
-                                            max_v_bin,
-                                            self.solver.num_particles)
-            self.particle_v_truth.read_file(
-                f'{self.truth_dir}/v2-{episode_t}.alu')
-            self.runner.sqrt_inplace(self.particle_v_truth,
-                                     self.truth_num_beads)
-            self.runner.launch_histogram256(self.partial_histogram,
-                                            self.histogram_truth,
-                                            self.quantized4s_truth,
-                                            self.particle_v_truth, 0,
-                                            max_v_bin, self.truth_num_beads)
-            kl_div = self.runner.calculate_kl_divergence(
-                self.histogram_sim, self.histogram_truth,
-                self.solver.num_particles, self.truth_num_beads)
-            step_info = {}
-            step_info['v_error'] = kl_div
-            step_info['truth_sqr'] = 0
-            step_info['num_masked'] = 0
-            return -kl_div, step_info
-
-    def step(self, action_aggregated_converted):
-        if np.sum(np.isnan(action_aggregated_converted)) > 0:
-            print(action_aggregated_converted)
+    def step(self, action_converted):
+        if np.sum(np.isnan(action_converted)) > 0:
+            print(action_converted)
             sys.exit(0)
 
         set_usher_param(self.solver.usher, self.dp, self.unit,
-                        self.buoy_v_real, self.coil_x_real,
-                        action_aggregated_converted, self.num_buoys)
+                        self.buoy_v_real, self.coil_x_real, action_converted,
+                        self.num_buoys)
         self.dp.map_graphical_pointers()
         target_t = self.unit.from_real_time(self.episode_t *
                                             self.truth_real_interval)
@@ -549,12 +596,10 @@ class Environment:
                         self.solver.num_particles)
                 self.next_visual_frame_id += 1
 
-        new_state_aggregated = self.collect_state(self.episode_t + 1)
+        new_state = self.collect_state(self.episode_t + 1)
 
         # find reward
         reward, step_info = self.calculate_reward(self.episode_t + 1)
-        if self.shape_dir is not None:
-            self.calculate_volumetric_error(self.episode_t + 1, step_info)
         grid_anomaly = self.dp.coat(
             self.solver.grid_anomaly).get()[0]  # TODO: use sum
 
@@ -573,7 +618,7 @@ class Environment:
             done = True
         if self.episode_t == self._max_episode_steps - 1:
             done = True
-        return new_state_aggregated, reward, done, step_info
+        return new_state, reward, done, step_info
 
 
 class EnvironmentPIV(Environment):
@@ -608,14 +653,21 @@ class EnvironmentPIV(Environment):
                  buoy_filter_postfix='-f18',
                  volume_method=al.VolumeMethod.pellets,
                  save_visual=False):
-        super().__init__(dp, truth_dirs, cache_dir, ma_alphas, display,
-                         volume_method, save_visual)
+        super().__init__(dp,
+                         truth_dirs,
+                         cache_dir,
+                         ma_alphas,
+                         display,
+                         volume_method,
+                         save_visual,
+                         reward_metric=None,
+                         evaluation_metrics=['eulerian_masked'])
         self.container_shift = dp.f3(0, self.container_width * 0.5, 0)
         self.pile.x[0] = self.container_shift
         self.cni.grid_offset.y = -4
         self.dp.copy_cn()
         self.buoy_filter_postfix = buoy_filter_postfix
-        self.truth_real_freq = 500.0
+        self.truth_real_freq = 500.0  # TODO: change to 100Hz
         self.truth_real_interval = 1.0 / self.truth_real_freq
 
     def get_simulation_sampling(self, truth_dir):
@@ -682,7 +734,14 @@ class EnvironmentPIV(Environment):
             buoys_q[buoy_id] = self.buoy_interpolators[buoy_id].get_q(t_real)
         return buoys_x, buoys_v, buoys_q
 
-    def calculate_reward(self, episode_t):
+    def calculate_eulerian_error(self, episode_t, use_mask=True):
+        if use_mask:
+            return self.calculate_eulerian_error(episode_t)
+        else:
+            raise Exception(
+                "Eulerian error without mask is unsupported in PIV")
+
+    def calculate_eulerian_masked_error(self, episode_t):
         self.simulation_sampling.prepare_neighbor_and_boundary(
             self.runner, self.solver)
         simulation_v_real = self.simulation_sampling.sample_velocity(
@@ -691,15 +750,12 @@ class EnvironmentPIV(Environment):
 
         self.ground_truth_v.set(self.truth_v_collection[episode_t])
         self.weight.set(self.mask_collection[episode_t])
-        v_error = self.runner.calculate_se_yz_masked(
+        error = self.runner.calculate_se_yz_masked(
             simulation_v_real, self.ground_truth_v, self.weight,
             self.simulation_sampling.num_samples)
-        truth_sqr = self.runner.calculate_se_yz_masked(
+        baseline = self.runner.calculate_se_yz_masked(
             self.v_zero, self.ground_truth_v, self.weight,
             self.simulation_sampling.num_samples)
-        step_info = {}
-        step_info['v_error'] = v_error
-        step_info['truth_sqr'] = truth_sqr
-        step_info['num_masked'] = np.sum(self.mask_collection[episode_t])
+        num_samples = np.sum(self.mask_collection[episode_t])
 
-        return -v_error, step_info
+        return error, baseline, num_samples

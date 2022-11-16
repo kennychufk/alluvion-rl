@@ -1,20 +1,16 @@
 import sys
 import argparse
-import math
-import random
-import os
 from collections import deque
 
 import alluvion as al
 import numpy as np
 from pathlib import Path
-from sklearn.metrics import mean_squared_error
 import wandb
 import torch
 import time
 
-from rl import TD3, OrnsteinUhlenbeckProcess, GaussianNoise
-from util import Environment, EnvironmentPIV, get_state_dim, get_action_dim, eval_agent
+from rl import TD3, GaussianNoise
+from util import Environment, get_state_dim, get_action_dim
 
 parser = argparse.ArgumentParser(description='RL playground')
 parser.add_argument('--seed', type=int, default=2021)
@@ -83,7 +79,7 @@ env = Environment(dp,
                   cache_dir=args.cache_dir,
                   ma_alphas=ma_alphas,
                   display=args.display,
-                  reward_option=0)
+                  reward_metric='eulerian')
 env.seed(args.seed)
 
 min_xoffset_y = -0.02
@@ -140,13 +136,11 @@ config.gamma = agent.gamma
 config.replay_size = agent.replay_size
 config.actor_final_scale = agent.actor_final_scale
 config.critic_final_scale = agent.critic_final_scale
-# config.sigma = agent.expl_noise_func.sigma
-# config.theta = agent.expl_noise_func.theta
 config.learn_after = agent.learn_after
 config.batch_size = agent.batch_size
 config.seed = args.seed
 config.ma_alphas = env.ma_alphas
-config.reward_option = env.reward_option
+config.reward_metric = env.reward_metric
 
 wandb.watch(agent.critic)
 
@@ -155,49 +149,32 @@ episode_id = 0
 episode_t = 0
 episode_reward = 0
 episode_info = {}
-state_aggregated = env.reset()
+state = env.reset()
 done = False
-
-# piv_truth_dirs = [
-#     '/media/kennychufk/vol1bk0/20210415_162749-laser-too-high/',
-#     '/media/kennychufk/vol1bk0/20210415_164304/',
-#     '/media/kennychufk/vol1bk0/20210416_101435/',
-#     '/media/kennychufk/vol1bk0/20210416_102548/',
-#     '/media/kennychufk/vol1bk0/20210416_103739/',
-#     '/media/kennychufk/vol1bk0/20210416_104936/',
-#     '/media/kennychufk/vol1bk0/20210416_120534/'
-# ]
-# env_piv = EnvironmentPIV(dp,
-#                          truth_dirs=piv_truth_dirs,
-#                          cache_dir=args.cache_dir,
-#                          ma_alphas=config['ma_alphas'],
-#                          display=args.display,
-#                          volume_method=al.VolumeMethod.pellets)
 
 for t in range(max_timesteps):
     episode_t += 1
     if t < agent.learn_after:
-        action_aggregated = np.zeros((env.num_buoys, agent.action_dim))
+        action = np.zeros((env.num_buoys, agent.action_dim))
         for buoy_id in range(env.num_buoys):
-            action_aggregated[buoy_id] = agent.uniform_random_action()
+            action[buoy_id] = agent.uniform_random_action()
     else:
-        action_aggregated = agent.get_action(state_aggregated)
-    new_state_aggregated, reward, done, info = env.step(
-        agent.actor.from_normalized_action(action_aggregated))
-    # done_int = int(done) if episode_t < env._max_episode_steps else 0
+        action = agent.get_action(state)
+    new_state, reward, done, step_info = env.step(
+        agent.actor.from_normalized_action(action))
     done_int = int(done)
 
     for buoy_id in range(env.num_buoys):
-        agent.remember(state_aggregated[buoy_id], action_aggregated[buoy_id],
-                       reward, new_state_aggregated[buoy_id], done_int)
+        agent.remember(state[buoy_id], action[buoy_id], reward,
+                       new_state[buoy_id], done_int)
     episode_reward += reward
-    state_aggregated = new_state_aggregated
-    for key in info:
+    state = new_state
+    for key in step_info:
         if key not in episode_info:
             episode_info[key] = 0
-        episode_info[key] += info[key]
+        episode_info[key] += step_info[key]
 
-    if t >= agent.learn_after:  # as memory size is env.num_buoys * episode_t
+    if t >= agent.learn_after:
         agent.learn()
 
     if done:
@@ -207,25 +184,18 @@ for t in range(max_timesteps):
             log_object['score100'] = np.mean(list(score_history))
 
         for key in episode_info:
-            if (key != 'truth_sqr') and (key != 'num_masked'):
+            if (not key.endswith("_baseline")) and (
+                    not key.endswith("_num_samples")):
                 log_object[key] = episode_info[key]
 
         episode_id += 1
         episode_t = 0
         episode_reward = 0
         episode_info = {}
-        state_aggregated = env.reset()
+        state = env.reset()
         done = False
 
         if episode_id % 50 == 0:
-            # result_dict = {}
-            # log_object['val-sim'] = eval_agent(env_val_sim,
-            #                                    agent,
-            #                                    result_dict,
-            #                                    report_state_action=False)
-            # for result_key in result_dict:
-            #     log_object[result_key] = result_dict[result_key]
-            # print('result_dict', result_dict)
             print('log_object', log_object)
             save_dir = f"artifacts/{wandb.run.id}/models/{episode_id}"
             Path(save_dir).mkdir(parents=True, exist_ok=True)
