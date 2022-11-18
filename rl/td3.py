@@ -288,16 +288,17 @@ class TD3:
     def remember(self, state0, action, rew, state1, done):
         self.memory.store(state0, action, rew, state1, done)
 
-    def learn(self):
+    def learn(self, symmetrize=True):
         self.train_step += 1
         state, action, reward, new_state, term = self.memory.sample_buffer(
             self.batch_size)
 
-        state = symmetrize_state_batch(state)
-        reward = symmetrize_scalar_batch(reward)
-        term = symmetrize_scalar_batch(term)
-        new_state = symmetrize_state_batch(new_state)
-        action = symmetrize_action_batch(action)
+        if symmetrize:
+            state = symmetrize_state_batch(state)
+            reward = symmetrize_scalar_batch(reward)
+            term = symmetrize_scalar_batch(term)
+            new_state = symmetrize_state_batch(new_state)
+            action = symmetrize_action_batch(action)
 
         # Optimize critic
         self.target_actor.eval()
@@ -309,7 +310,12 @@ class TD3:
 
             target_q0, target_q1 = self.target_critic(new_state, new_action)
             target_q = torch.min(target_q0, target_q1)
-            target_q = reward + self.gamma * term * target_q
+            if symmetrize:
+                target_q = reward + self.gamma * term * target_q
+            else:
+                target_q = reward.view(
+                    self.batch_size,
+                    1) + self.gamma * term.view(self.batch_size, 1) * target_q
 
         current_q0, current_q1 = self.critic.forward(state, action)
         critic_loss = F.mse_loss(current_q0, target_q) + F.mse_loss(

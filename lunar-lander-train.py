@@ -17,8 +17,7 @@ random.seed(args.seed)
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 
-env = gym.make('LunarLanderContinuous-v2')
-env.seed(args.seed)
+env = gym.make('LunarLander-v2', continuous=True)
 env.action_space.seed(args.seed)
 
 agent = TD3(actor_lr=1e-4,
@@ -62,7 +61,7 @@ score_history = deque(maxlen=100)
 episode_id = 0
 episode_t = 0
 episode_reward = 0
-state = env.reset()
+state = env.reset(seed=args.seed)
 done = False
 
 for t in range(max_timesteps):
@@ -79,7 +78,7 @@ for t in range(max_timesteps):
     state = new_state
     # env.render()
     if t >= agent.learn_after:
-        agent.learn()
+        agent.learn(symmetrize=False)
 
     if done:
         score_history.append(episode_reward)
