@@ -281,9 +281,14 @@ class TD3:
         return averaged_out.numpy()
 
     def get_value(self, state, action):
-        return self.critic.forward(
+        self.critic.eval()
+        value0, value1 = self.critic.forward(
             torch.tensor(state, dtype=torch.float).to(torch.device('cuda')),
             torch.tensor(action, dtype=torch.float).to(torch.device('cuda')))
+        self.critic.train()
+        return np.hstack(
+            [value0.cpu().detach().numpy(),
+             value1.cpu().detach().numpy()])
 
     def remember(self, state0, action, rew, state1, done):
         self.memory.store(state0, action, rew, state1, done)

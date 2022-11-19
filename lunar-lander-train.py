@@ -13,12 +13,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=2021)
 args = parser.parse_args()
 
+env = gym.make('LunarLander-v2', continuous=True, enable_wind=False)
+env.action_space.seed(args.seed)
 random.seed(args.seed)
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
-
-env = gym.make('LunarLander-v2', continuous=True)
-env.action_space.seed(args.seed)
 
 agent = TD3(actor_lr=1e-4,
             critic_lr=1e-3,
@@ -28,7 +27,7 @@ agent = TD3(actor_lr=1e-4,
             min_action=env.action_space.low,
             max_action=env.action_space.high,
             replay_size=1000000,
-            expl_noise_func=GaussianNoise(),
+            expl_noise_func=GaussianNoise(std_dev=0.1),
             hidden_sizes=[400, 300],
             soft_update_rate=0.001,
             batch_size=64,
