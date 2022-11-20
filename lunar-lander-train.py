@@ -13,11 +13,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=2021)
 args = parser.parse_args()
 
-env = gym.make('LunarLander-v2', continuous=True, enable_wind=False)
-env.action_space.seed(args.seed)
 random.seed(args.seed)
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
+env = gym.make('LunarLander-v2', continuous=True, enable_wind=False)
+env.action_space.seed(args.seed)
 
 agent = TD3(actor_lr=1e-4,
             critic_lr=1e-3,
