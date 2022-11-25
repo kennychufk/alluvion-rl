@@ -74,6 +74,7 @@ train_dirs = [
 
 dp = al.Depot(np.float32)
 ma_alphas = [0.0625, 0.125, 0.25, 0.4]
+local_reward_ratio = 0.1
 env = Environment(dp,
                   truth_dirs=train_dirs,
                   cache_dir=args.cache_dir,
@@ -116,6 +117,9 @@ agent = TD3(actor_lr=3e-4,
             actor_final_scale=0.05 / np.sqrt(1000),
             critic_final_scale=1,
             soft_update_rate=0.005,
+            policy_update_freq=2,
+            policy_noise=0.2,
+            noise_clip=0.5,
             batch_size=256)
 max_timesteps = 10000000
 if args.block_scan:
@@ -141,6 +145,10 @@ config.batch_size = agent.batch_size
 config.seed = args.seed
 config.ma_alphas = env.ma_alphas
 config.reward_metric = env.reward_metric
+config.policy_update_freq = agent.policy_update_freq
+config.policy_noise = agent.policy_noise
+config.noise_clip = agent.noise_clip
+config.local_reward_ratio = local_reward_ratio
 
 wandb.watch(agent.critic)
 
@@ -160,12 +168,13 @@ for t in range(max_timesteps):
             action[buoy_id] = agent.uniform_random_action()
     else:
         action = agent.get_action(state)
-    new_state, reward, done, step_info = env.step(
-        agent.actor.from_normalized_action(action))
-    done_int = int(done)
+    new_state, reward, local_rewards, done, step_info = env.step(
+        agent.actor.from_normalized_action(action), compute_local_rewards=True)
+    done_int = 0
 
     for buoy_id in range(env.num_buoys):
-        agent.remember(state[buoy_id], action[buoy_id], reward,
+        agent.remember(state[buoy_id], action[buoy_id],
+                       reward + local_rewards[buoy_id] * local_reward_ratio,
                        new_state[buoy_id], done_int)
     episode_reward += reward
     state = new_state

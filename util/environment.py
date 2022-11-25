@@ -126,6 +126,7 @@ class Environment:
         max_num_beads = self.find_max_num_beads()
         print('max_num_beads', max_num_beads)
         max_num_buoys = self.find_max_num_buoys()
+        self.max_num_buoys = max_num_buoys
         print('max_num_buoys', max_num_buoys)
         truth_max_num_beads = self.find_truth_max_num_beads()
 
@@ -221,6 +222,9 @@ class Environment:
         self.ground_truth_v = None
         self.v_zero = None
         self.weight = None
+        self.squared_error = None
+        self.buoy_reward_mask = None
+        self.buoy_x = self.dp.create_coated((self.max_num_buoys), 3)
 
         if 'statistical' in self.metrics:
             self.partial_histogram = self.dp.create_coated(
@@ -293,6 +297,10 @@ class Environment:
             self.dp.remove(self.v_zero)
         if self.weight is not None:
             self.dp.remove(self.weight)
+        if self.squared_error is not None:
+            self.dp.remove(self.squared_error)
+        if self.buoy_reward_mask is not None:
+            self.dp.remove(self.buoy_reward_mask)
         self.simulation_sampling = self.get_simulation_sampling(self.truth_dir)
         self.ground_truth_v = self.dp.create_coated_like(
             self.simulation_sampling.sample_data3)
@@ -301,6 +309,10 @@ class Environment:
         self.v_zero.set_zero()
         self.weight = self.dp.create_coated(
             (self.simulation_sampling.num_samples), 1)
+        self.squared_error = self.dp.create_coated(
+            (self.simulation_sampling.num_samples), 1)
+        self.buoy_reward_mask = self.dp.create_coated(
+            (self.max_num_buoys, self.simulation_sampling.num_samples), 1)
         # self.histogram_x_all = np.load(f'{self.truth_dir}/vx-hist.npy')
         # self.histogram_y_all = np.load(f'{self.truth_dir}/vy-hist.npy')
         # self.histogram_z_all = np.load(f'{self.truth_dir}/vz-hist.npy')
@@ -396,6 +408,7 @@ class Environment:
 
         self.solver.reset_solving_var()
         self.solver.t = 0
+        self.next_visual_frame_id = 0
 
     def reset(self):
         self.reset_truth_dir()
@@ -449,6 +462,9 @@ class Environment:
             self.runner, self.solver)
         self.usher_sampling.sample_density(self.runner)
         self.usher_sampling.sample_velocity(self.runner, self.solver)
+
+        # for local reward
+        self.buoy_x.set(self.unit.from_real_length(buoy_x_real))
         # self.usher_sampling.sample_vorticity(self.runner, self.solver)
         return make_state(self.dp, self.unit, self.kinematic_viscosity_real,
                           self.buoy_v_real, self.buoy_v_ma0, self.buoy_v_ma1,
@@ -456,7 +472,13 @@ class Environment:
                           self.coil_x_real, self.usher_sampling,
                           self.num_buoys)
 
-    def calculate_volumetric_error(self, episode_t):
+    def calculate_volumetric_error(self,
+                                   episode_t,
+                                   compute_local_errors=False):
+        local_errors = None  # TODO: to be implemented
+        if compute_local_errors:
+            raise Exception(
+                "Local rewards are unsupported for volumetric error")
         truth_vdb_filename = f'{self.truth_dir}/x-{episode_t}-resampled6.vdb'
         truth_ls = alluvol.FloatGrid.read(truth_vdb_filename)
 
@@ -493,9 +515,12 @@ class Environment:
         baseline_error_ls.setGridClassAsLevelSet()
         error = recon_error_ls.calculate_volume()
         baseline = baseline_error_ls.calculate_volume()
-        return error, baseline, 1
+        return error, local_errors, baseline, 1
 
-    def calculate_eulerian_error(self, episode_t, use_mask=False):
+    def calculate_eulerian_error(self,
+                                 episode_t,
+                                 use_mask=False,
+                                 compute_local_errors=False):
         self.simulation_sampling.prepare_neighbor_and_boundary(
             self.runner, self.solver)
         simulation_v_real = self.simulation_sampling.sample_velocity(
@@ -508,20 +533,55 @@ class Environment:
                 f'{self.truth_dir}/density-weight-{episode_t}.alu')
         else:
             self.weight.fill(1)
-        error = self.runner.calculate_se_weighted(
-            simulation_v_real, self.ground_truth_v, self.weight,
-            self.simulation_sampling.num_samples)
+        self.runner.calculate_se(simulation_v_real, self.ground_truth_v,
+                                 self.squared_error,
+                                 self.simulation_sampling.num_samples)
+        self.runner.launch_compute_distance_mask_multiple(
+            self.simulation_sampling.sample_x,
+            self.buoy_x,
+            self.buoy_reward_mask,
+            distance_threshold=self.unit.from_real_length(0.03),
+            num_grid_points=self.simulation_sampling.num_samples,
+            num_buoys=self.num_buoys)
+        local_num_samples = np.sum(self.buoy_reward_mask.get(
+            [self.num_buoys, self.simulation_sampling.num_samples]),
+                                   axis=1)
+        local_errors = None
+        if compute_local_errors:
+            local_errors = np.zeros(self.num_buoys)
+            for buoy_id in range(self.num_buoys):
+                local_errors[
+                    buoy_id] = self.runner.sum_products_different_offsets(
+                        self.squared_error,
+                        self.buoy_reward_mask,
+                        self.simulation_sampling.num_samples,
+                        offset0=0,
+                        offset1=self.simulation_sampling.num_samples * buoy_id)
+            local_errors /= local_num_samples  # NOTE: assume that buoys never leave the grid
+
+        error = self.runner.sum_products(self.squared_error, self.weight,
+                                         self.simulation_sampling.num_samples)
         baseline = self.runner.calculate_se_weighted(
             self.v_zero, self.ground_truth_v, self.weight,
             self.simulation_sampling.num_samples)
         num_samples = self.runner.sum(self.weight,
                                       self.simulation_sampling.num_samples)
-        return error, baseline, num_samples
+        return error, local_errors, baseline, num_samples
 
-    def calculate_eulerian_masked_error(self, episode_t):
-        return self.calculate_eulerian_error(episode_t, use_mask=True)
+    def calculate_eulerian_masked_error(self,
+                                        episode_t,
+                                        compute_local_errors=False):
+        return self.calculate_eulerian_error(
+            episode_t,
+            use_mask=True,
+            compute_local_errors=compute_local_errors)
 
-    def calculate_statistical_error(self, episode_t):
+    def calculate_statistical_error(self,
+                                    episode_t,
+                                    compute_local_errors=False):
+        local_errors = None  # TODO: to be implemented
+        if compute_local_errors:
+            raise Exception("Local rewards are unsupported for KL Divergence")
         self.bead_v_sim.set_from(self.solver.particle_cfl_v2,
                                  self.solver.num_particles)
         self.runner.sqrt_inplace(self.bead_v_sim, self.solver.num_particles)
@@ -545,11 +605,12 @@ class Environment:
         baseline = self.runner.calculate_kl_divergence(
             self.histogram_baseline, self.histogram_truth,
             self.solver.num_particles, self.truth_num_beads)
-        return error, baseline, 1
+        return error, local_errors, baseline, 1
 
-    def calculate_reward(self, episode_t):
+    def calculate_reward(self, episode_t, compute_local_rewards):
         step_info = {}
         reward = 0
+        local_rewards = None
         for i, metric in enumerate(self.metrics):
             if metric == "eulerian":
                 error_fn = self.calculate_eulerian_error
@@ -559,15 +620,18 @@ class Environment:
                 error_fn = self.calculate_statistical_error
             else:
                 raise Exception(f"Unrecognized metric: {metric}")
-            error, baseline, num_samples = error_fn(episode_t)
+            error, local_errors, baseline, num_samples = error_fn(
+                episode_t, compute_local_errors=compute_local_rewards)
             step_info[metric + "_error"] = error
             step_info[metric + "_baseline"] = baseline
             step_info[metric + "_num_samples"] = num_samples
             if self.metrics[metric] > 0:
                 reward = -error / num_samples
-        return reward, step_info
+                if compute_local_rewards:
+                    local_rewards = -local_errors
+        return reward, local_rewards, step_info
 
-    def step(self, action_converted):
+    def step(self, action_converted, compute_local_rewards=False):
         if np.sum(np.isnan(action_converted)) > 0:
             print(action_converted)
             sys.exit(0)
@@ -599,7 +663,8 @@ class Environment:
         new_state = self.collect_state(self.episode_t + 1)
 
         # find reward
-        reward, step_info = self.calculate_reward(self.episode_t + 1)
+        reward, local_rewards, step_info = self.calculate_reward(
+            self.episode_t + 1, compute_local_rewards)
         grid_anomaly = self.dp.coat(
             self.solver.grid_anomaly).get()[0]  # TODO: use sum
 
@@ -618,7 +683,7 @@ class Environment:
             done = True
         if self.episode_t == self._max_episode_steps - 1:
             done = True
-        return new_state, reward, done, step_info
+        return new_state, reward, local_rewards, done, step_info
 
 
 class EnvironmentPIV(Environment):
@@ -734,14 +799,23 @@ class EnvironmentPIV(Environment):
             buoys_q[buoy_id] = self.buoy_interpolators[buoy_id].get_q(t_real)
         return buoys_x, buoys_v, buoys_q
 
-    def calculate_eulerian_error(self, episode_t, use_mask=True):
+    def calculate_eulerian_error(self,
+                                 episode_t,
+                                 use_mask=True,
+                                 compute_local_errors=False):
         if use_mask:
-            return self.calculate_eulerian_error(episode_t)
+            return self.calculate_eulerian_masked_error(
+                episode_t, compute_local_errors)
         else:
             raise Exception(
                 "Eulerian error without mask is unsupported in PIV")
 
-    def calculate_eulerian_masked_error(self, episode_t):
+    def calculate_eulerian_masked_error(self,
+                                        episode_t,
+                                        compute_local_errors=False):
+        local_errors = None
+        if compute_local_errors:
+            raise Exception("Local errors are unsupported in PIV")
         self.simulation_sampling.prepare_neighbor_and_boundary(
             self.runner, self.solver)
         simulation_v_real = self.simulation_sampling.sample_velocity(
@@ -758,4 +832,4 @@ class EnvironmentPIV(Environment):
             self.simulation_sampling.num_samples)
         num_samples = np.sum(self.mask_collection[episode_t])
 
-        return error, baseline, num_samples
+        return error, local_errors, baseline, num_samples

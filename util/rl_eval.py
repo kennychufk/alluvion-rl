@@ -28,6 +28,8 @@ def eval_agent(eval_env,
             action_history = np.zeros(
                 (eval_env._max_episode_steps, eval_env.num_buoys,
                  get_action_dim()))
+            value_history = np.zeros(
+                (eval_env._max_episode_steps, eval_env.num_buoys, 2))
             sim_v_history = np.zeros(
                 (eval_env._max_episode_steps,
                  eval_env.simulation_sampling.num_samples, 3))
@@ -48,14 +50,17 @@ def eval_agent(eval_env,
             within_t_accumulator[metric] = {'error': 0, 'baseline': 0}
         while not done:
             action = agent.get_action_symmetrized(state)
+            value = agent.get_value(state, action)
             action_converted = agent.actor.from_normalized_action(action)
             if (report_state_action):
                 state_history[cursor] = state
                 action_history[cursor] = action_converted
+                value_history[cursor] = value
                 sim_v_history[
                     cursor] = eval_env.simulation_sampling.sample_data3.get()
                 cursor += 1
-            state, reward, done, step_info = eval_env.step(action_converted)
+            state, reward, local_rewards, done, step_info = eval_env.step(
+                action_converted, compute_local_rewards=False)
             for metric in eval_env.metrics:
                 error = step_info[metric + '_error']
                 baseline = step_info[metric + '_baseline']
@@ -80,6 +85,7 @@ def eval_agent(eval_env,
         if (report_state_action):
             np.save(f'{str(report_save_dir)}/state.npy', state_history)
             np.save(f'{str(report_save_dir)}/action.npy', action_history)
+            np.save(f'{str(report_save_dir)}/value.npy', value_history)
             np.save(f'{str(report_save_dir)}/sim_v_real.npy', sim_v_history)
             np.save(f'{str(report_save_dir)}/kernel_radius_recon.npy',
                     eval_env.real_kernel_radius)
