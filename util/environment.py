@@ -540,7 +540,7 @@ class Environment:
             self.simulation_sampling.sample_x,
             self.buoy_x,
             self.buoy_reward_mask,
-            distance_threshold=self.unit.from_real_length(0.03),
+            distance_threshold=self.unit.from_real_length(0.05),
             num_grid_points=self.simulation_sampling.num_samples,
             num_buoys=self.num_buoys)
         local_num_samples = np.sum(self.buoy_reward_mask.get(

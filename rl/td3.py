@@ -222,32 +222,48 @@ class TD3:
         self.policy_update_freq = policy_update_freq
         self.actor_final_scale = actor_final_scale
         self.critic_final_scale = critic_final_scale
-        self.memory = ReplayBuffer(replay_size, state_dim, action_dim)
+        self.num_critic_variants = 5
+        self.memory = [
+            ReplayBuffer(replay_size, state_dim, action_dim)
+            for i in range(self.num_critic_variants)
+        ]
         self.train_step = 0
 
         self.actor = MLPActor(state_dim, action_dim, hidden_sizes, min_action,
                               max_action, actor_final_scale)
         self.actor.to(torch.device('cuda'))
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)
-        self.critic = MLPTwinCritic(state_dim, action_dim, hidden_sizes,
-                                    critic_final_scale)
-        self.critic.to(torch.device('cuda'))
-        self.critic_optimizer = optim.Adam(self.critic.parameters(),
-                                           lr=critic_lr,
-                                           weight_decay=critic_weight_decay)
+        self.critic = [
+            MLPTwinCritic(state_dim, action_dim, hidden_sizes,
+                          critic_final_scale)
+            for i in range(self.num_critic_variants)
+        ]
+        for i in range(self.num_critic_variants):
+            self.critic[i].to(torch.device('cuda'))
+        self.critic_optimizer = [
+            optim.Adam(self.critic[i].parameters(),
+                       lr=critic_lr,
+                       weight_decay=critic_weight_decay)
+            for i in range(self.num_critic_variants)
+        ]
 
         self.target_actor = MLPActor(state_dim, action_dim, hidden_sizes,
                                      min_action, max_action, actor_final_scale)
         self.target_actor.to(torch.device('cuda'))
-        self.target_critic = MLPTwinCritic(state_dim, action_dim, hidden_sizes,
-                                           critic_final_scale)
-        self.target_critic.to(torch.device('cuda'))
+        self.target_critic = [
+            MLPTwinCritic(state_dim, action_dim, hidden_sizes,
+                          critic_final_scale)
+            for i in range(self.num_critic_variants)
+        ]
+        for i in range(self.num_critic_variants):
+            self.target_critic[i].to(torch.device('cuda'))
 
         self.expl_noise_func = expl_noise_func
         self.expl_noise_func.reset(action_dim)
 
         TD3.hard_update(self.target_actor, self.actor)
-        TD3.hard_update(self.target_critic, self.critic)
+        for i in range(self.num_critic_variants):
+            TD3.hard_update(self.target_critic[i], self.critic[i])
 
     def uniform_random_action(self):
         return np.random.uniform(-1, 1, self.action_dim)
@@ -280,22 +296,22 @@ class TD3:
                                    dim=1)
         return averaged_out.numpy()
 
-    def get_value(self, state, action):
-        self.critic.eval()
-        value0, value1 = self.critic.forward(
-            torch.tensor(state, dtype=torch.float).to(torch.device('cuda')),
-            torch.tensor(action, dtype=torch.float).to(torch.device('cuda')))
-        self.critic.train()
-        return np.hstack(
-            [value0.cpu().detach().numpy(),
-             value1.cpu().detach().numpy()])
+    # def get_value(self, state, action):
+    #     self.critic.eval()
+    #     value0, value1 = self.critic.forward(
+    #         torch.tensor(state, dtype=torch.float).to(torch.device('cuda')),
+    #         torch.tensor(action, dtype=torch.float).to(torch.device('cuda')))
+    #     self.critic.train()
+    #     return np.hstack(
+    #         [value0.cpu().detach().numpy(),
+    #          value1.cpu().detach().numpy()])
 
-    def remember(self, state0, action, rew, state1, done):
-        self.memory.store(state0, action, rew, state1, done)
+    def remember(self, i, state0, action, rew, state1, done):
+        self.memory[i].store(state0, action, rew, state1, done)
 
-    def learn(self, symmetrize=True):
+    def learn(self, i, symmetrize=True):
         self.train_step += 1
-        state, action, reward, new_state, term = self.memory.sample_buffer(
+        state, action, reward, new_state, term = self.memory[i].sample_buffer(
             self.batch_size)
 
         if symmetrize:
@@ -307,13 +323,13 @@ class TD3:
 
         # Optimize critic
         self.target_actor.eval()
-        self.target_critic.eval()
+        self.target_critic[i].eval()
         with torch.no_grad():
             noise = (torch.randn_like(action) * self.policy_noise).clamp(
                 -self.noise_clip, self.noise_clip)
             new_action = (self.target_actor(new_state) + noise).clamp(-1, 1)
 
-            target_q0, target_q1 = self.target_critic(new_state, new_action)
+            target_q0, target_q1 = self.target_critic[i](new_state, new_action)
             target_q = torch.min(target_q0, target_q1)
             if symmetrize:
                 target_q = reward + self.gamma * term * target_q
@@ -322,32 +338,32 @@ class TD3:
                     self.batch_size,
                     1) + self.gamma * term.view(self.batch_size, 1) * target_q
 
-        current_q0, current_q1 = self.critic.forward(state, action)
+        current_q0, current_q1 = self.critic[i].forward(state, action)
         critic_loss = F.mse_loss(current_q0, target_q) + F.mse_loss(
             current_q1, target_q)
 
-        self.critic_optimizer.zero_grad()
+        self.critic_optimizer[i].zero_grad()
         critic_loss.backward()
-        self.critic_optimizer.step()
+        self.critic_optimizer[i].step()
 
         # Optimize actor
         if self.train_step % self.policy_update_freq == 0:
-            self.critic.eval()
-            for p in self.critic.parameters():
+            self.critic[i].eval()
+            for p in self.critic[i].parameters():
                 p.requires_grad = False
-            actor_loss = -self.critic.q0(state, self.actor(state)).mean()
+            actor_loss = -self.critic[i].q0(state, self.actor(state)).mean()
 
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
             self.actor_optimizer.step()
 
-            self.critic.train()
-            for p in self.critic.parameters():
+            self.critic[i].train()
+            for p in self.critic[i].parameters():
                 p.requires_grad = True
 
             TD3.soft_update(self.target_actor, self.actor,
                             self.soft_update_rate)
-            TD3.soft_update(self.target_critic, self.critic,
+            TD3.soft_update(self.target_critic[i], self.critic[i],
                             self.soft_update_rate)
 
     @staticmethod
@@ -372,17 +388,19 @@ class TD3:
                    os.path.join(parent_dir, 'actor.pt'))
         torch.save(self.target_actor.state_dict(),
                    os.path.join(parent_dir, 'target_actor.pt'))
-        torch.save(self.critic.state_dict(),
-                   os.path.join(parent_dir, 'critic.pt'))
-        torch.save(self.target_critic.state_dict(),
-                   os.path.join(parent_dir, 'target_critic.pt'))
+        for i in range(self.num_critic_variants):
+            torch.save(self.critic[i].state_dict(),
+                       os.path.join(parent_dir, f'critic{i}.pt'))
+            torch.save(self.target_critic[i].state_dict(),
+                       os.path.join(parent_dir, f'target_critic{i}.pt'))
 
     def load_models(self, parent_dir):
         self.actor.load_state_dict(
             torch.load(os.path.join(parent_dir, 'actor.pt')))
         self.target_actor.load_state_dict(
             torch.load(os.path.join(parent_dir, 'target_actor.pt')))
-        self.critic.load_state_dict(
-            torch.load(os.path.join(parent_dir, 'critic.pt')))
-        self.target_critic.load_state_dict(
-            torch.load(os.path.join(parent_dir, 'target_critic.pt')))
+        for i in range(self.num_critic_variants):
+            self.critic[i].load_state_dict(
+                torch.load(os.path.join(parent_dir, f'critic{i}.pt')))
+            self.target_critic[i].load_state_dict(
+                torch.load(os.path.join(parent_dir, f'target_critic{i}.pt')))
