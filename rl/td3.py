@@ -296,15 +296,15 @@ class TD3:
                                    dim=1)
         return averaged_out.numpy()
 
-    # def get_value(self, state, action):
-    #     self.critic.eval()
-    #     value0, value1 = self.critic.forward(
-    #         torch.tensor(state, dtype=torch.float).to(torch.device('cuda')),
-    #         torch.tensor(action, dtype=torch.float).to(torch.device('cuda')))
-    #     self.critic.train()
-    #     return np.hstack(
-    #         [value0.cpu().detach().numpy(),
-    #          value1.cpu().detach().numpy()])
+    def get_value(self, state, action):
+        self.critic[0].eval()
+        value0, value1 = self.critic[0].forward(
+            torch.tensor(state, dtype=torch.float).to(torch.device('cuda')),
+            torch.tensor(action, dtype=torch.float).to(torch.device('cuda')))
+        self.critic[0].train()
+        return np.hstack(
+            [value0.cpu().detach().numpy(),
+             value1.cpu().detach().numpy()])
 
     def remember(self, i, state0, action, rew, state1, done):
         self.memory[i].store(state0, action, rew, state1, done)

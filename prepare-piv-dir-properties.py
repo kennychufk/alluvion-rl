@@ -8,7 +8,9 @@ piv_truth_dirs = [
     '/media/kennychufk/vol1bk0/20210416_102548/',
     '/media/kennychufk/vol1bk0/20210416_103739/',
     '/media/kennychufk/vol1bk0/20210416_104936/',
-    '/media/kennychufk/vol1bk0/20210416_120534/'
+    '/media/kennychufk/vol1bk0/20210416_120534/',
+    '/media/kennychufk/vol1bk0/20210416_114327',  # 8
+    '/media/kennychufk/vol1bk0/20210416_115523',  # 9
 ]
 
 for truth_dir in piv_truth_dirs:
