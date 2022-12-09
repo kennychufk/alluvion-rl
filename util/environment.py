@@ -348,7 +348,8 @@ class Environment:
                 f'{self.shape_dir}/{agitator_option}/models/manifold2-decimate-pa-dilate.obj',
                 self.recon_voxel_size)
             baseline_x = self.unit.to_real_length(
-                self.dp.coat(self.solver.particle_x).get())
+                self.dp.coat(self.solver.particle_x).get(
+                    self.solver.num_particles))
             self.baseline_ls = alluvol.create_liquid_level_set(
                 baseline_x, self.recon_raster_radius, self.recon_voxel_size)
 
@@ -506,11 +507,13 @@ class Environment:
         baseline_error_ls = alluvol.csgDifferenceCopy(baseline_sym_diff,
                                                       transformed_agitator_ls)
 
-        # recon_ls.write_obj(f"volumetric-save/recon-{episode_t}.obj")
-        # recon_error_ls.write_obj(
-        #     f"volumetric-save/recon-error-{episode_t}.obj")
-        # baseline_error_ls.write_obj(
-        #     f"volumetric-save/baseline-error-{episode_t}.obj")
+        if self.save_dir_visual is not None:
+            recon_ls.write_obj(
+                f"{str(self.save_dir_visual)}/recon-{episode_t}.obj")
+            recon_error_ls.write_obj(
+                f"{str(self.save_dir_visual)}/recon-error-{episode_t}.obj")
+            baseline_error_ls.write_obj(
+                f"{str(self.save_dir_visual)}/baseline-error-{episode_t}.obj")
         recon_error_ls.setGridClassAsLevelSet()
         baseline_error_ls.setGridClassAsLevelSet()
         error = recon_error_ls.calculate_volume()
@@ -618,6 +621,8 @@ class Environment:
                 error_fn = self.calculate_eulerian_masked_error
             elif metric == "statistical":
                 error_fn = self.calculate_statistical_error
+            elif metric == "volumetric":
+                error_fn = self.calculate_volumetric_error
             else:
                 raise Exception(f"Unrecognized metric: {metric}")
             error, local_errors, baseline, num_samples = error_fn(

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -400,7 +401,14 @@ class TD3:
         self.target_actor.load_state_dict(
             torch.load(os.path.join(parent_dir, 'target_actor.pt')))
         for i in range(self.num_critic_variants):
-            self.critic[i].load_state_dict(
-                torch.load(os.path.join(parent_dir, f'critic{i}.pt')))
-            self.target_critic[i].load_state_dict(
-                torch.load(os.path.join(parent_dir, f'target_critic{i}.pt')))
+            if Path(os.path.join(parent_dir, f'critic{i}.pt')).exists():
+                self.critic[i].load_state_dict(
+                    torch.load(os.path.join(parent_dir, f'critic{i}.pt')))
+                self.target_critic[i].load_state_dict(
+                    torch.load(os.path.join(parent_dir,
+                                            f'target_critic{i}.pt')))
+            else:
+                self.critic[i].load_state_dict(
+                    torch.load(os.path.join(parent_dir, f'critic.pt')))
+                self.target_critic[i].load_state_dict(
+                    torch.load(os.path.join(parent_dir, f'target_critic.pt')))

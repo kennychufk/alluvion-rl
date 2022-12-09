@@ -14,6 +14,9 @@ parser.add_argument('--shape-dir', type=str, default=None)
 parser.add_argument('--display', type=bool, default=False)
 parser.add_argument('--run-id', type=str, required=True)
 parser.add_argument('--model-iteration', type=int, default=-1)
+parser.add_argument('--evaluation-metrics',
+                    nargs='+',
+                    default=['eulerian_masked'])
 parser.add_argument('--piv', type=int, default=0)
 args = parser.parse_args()
 
@@ -32,8 +35,8 @@ agent = TD3(actor_lr=config['actor_lr'],
             gamma=config['gamma'],
             min_action=np.array(config['min_action']),
             max_action=np.array(config['max_action']),
-            learn_after=config['learn_after'],
-            replay_size=config['replay_size'],
+            learn_after=1000,
+            replay_size=1000,
             hidden_sizes=config['hidden_sizes'],
             actor_final_scale=config['actor_final_scale'],
             critic_final_scale=config['critic_final_scale'],
@@ -89,7 +92,7 @@ else:
                       ma_alphas=config['ma_alphas'],
                       display=args.display,
                       save_visual=save_visual,
-                      evaluation_metrics=['eulerian_masked'],
+                      evaluation_metrics=args.evaluation_metrics,
                       shape_dir=args.shape_dir)
 
 if eval_learning_curve:
