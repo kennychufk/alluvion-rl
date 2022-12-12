@@ -85,20 +85,6 @@ cni.grid_offset = al.int3(
     int(container_distance.aabb_min.y) - 2,
     int(container_distance.aabb_min.z) - 2)
 
-solver = dp.SolverI(runner,
-                    pile,
-                    dp,
-                    num_particles,
-                    enable_surface_tension=False,
-                    enable_vorticity=False)
-
-solver.num_particles = num_particles
-solver.max_dt = unit.from_real_time(0.00025)
-solver.initial_dt = solver.max_dt
-solver.min_dt = 0
-solver.cfl = 0.2
-solver.min_density_solve = 5
-
 density_weight = dp.create_coated((sampling.num_samples), 1)
 
 for frame_id in range(args.num_frames):
@@ -106,12 +92,7 @@ for frame_id in range(args.num_frames):
     pile.x[0] = unit.from_real_length(dp.f3(xs[-1]))
     pile.q[0] = dp.f4(qs[-1])
     pile.copy_kinematics_to_device()
-    solver.particle_x.read_file(f'{args.truth_dir}/x-{frame_id}.alu')
-    solver.particle_x.scale(unit.from_real_length(1))
-    solver.transform_all_pellets()
-    solver.update_particle_neighbors()
-    sampling.prepare_neighbor_and_boundary(runner, solver)
-    density_weight = sampling.sample_fluid_density(runner)
+    density_weight.fill(1)
     pile.compute_mask(0, 0, sampling.sample_x, density_weight,
                       sampling.num_samples)
     density_weight.write_file(
