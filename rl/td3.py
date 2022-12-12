@@ -223,7 +223,7 @@ class TD3:
         self.policy_update_freq = policy_update_freq
         self.actor_final_scale = actor_final_scale
         self.critic_final_scale = critic_final_scale
-        self.num_critic_variants = 5
+        self.num_critic_variants = 1
         self.memory = [
             ReplayBuffer(replay_size, state_dim, action_dim)
             for i in range(self.num_critic_variants)

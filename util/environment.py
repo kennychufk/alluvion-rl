@@ -507,7 +507,7 @@ class Environment:
         baseline_error_ls = alluvol.csgDifferenceCopy(baseline_sym_diff,
                                                       transformed_agitator_ls)
 
-        if self.save_dir_visual is not None:
+        if self.save_visual and self.save_dir_visual is not None:
             recon_ls.write_obj(
                 f"{str(self.save_dir_visual)}/recon-{episode_t}.obj")
             recon_error_ls.write_obj(
