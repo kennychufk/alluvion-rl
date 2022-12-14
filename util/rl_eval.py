@@ -33,6 +33,15 @@ def eval_agent(eval_env,
             sim_v_history = np.zeros(
                 (eval_env._max_episode_steps,
                  eval_env.simulation_sampling.num_samples, 3))
+            error_histories = {}
+            baseline_histories = {}
+            error_num_sample_histories = {}
+            for metric in eval_env.metrics:
+                error_histories[metric] = np.zeros(eval_env._max_episode_steps)
+                baseline_histories[metric] = np.zeros(
+                    eval_env._max_episode_steps)
+                error_num_sample_histories[metric] = np.zeros(
+                    eval_env._max_episode_steps)
             cursor = 0
         dirname_short = Path(eval_env.truth_dir).name[4:15]
         if report_state_action or eval_env.save_visual:
@@ -52,6 +61,7 @@ def eval_agent(eval_env,
             action = agent.get_action_symmetrized(state)
             value = agent.get_value(state, action)
             action_converted = agent.actor.from_normalized_action(action)
+
             if (report_state_action):
                 state_history[cursor] = state
                 action_history[cursor] = action_converted
@@ -65,6 +75,10 @@ def eval_agent(eval_env,
                 error = step_info[metric + '_error']
                 baseline = step_info[metric + '_baseline']
                 num_samples = step_info[metric + '_num_samples']
+                if report_state_action:
+                    error_histories[metric][cursor] = error
+                    baseline_histories[metric][cursor] = baseline
+                    error_num_sample_histories[metric][cursor] = num_samples
                 all_episodes_accumulator[metric]['error'] += error
                 accumulator[metric]['error'] += error
                 accumulator[metric]['baseline'] += baseline
@@ -89,6 +103,13 @@ def eval_agent(eval_env,
             np.save(f'{str(report_save_dir)}/sim_v_real.npy', sim_v_history)
             np.save(f'{str(report_save_dir)}/kernel_radius_recon.npy',
                     eval_env.real_kernel_radius)
+            for metric in eval_env.metrics:
+                np.save(f'{str(report_save_dir)}/{metric}_error.npy',
+                        error_histories[metric])
+                np.save(f'{str(report_save_dir)}/{metric}_baseline.npy',
+                        baseline_histories[metric])
+                np.save(f'{str(report_save_dir)}/{metric}_num_samples.npy',
+                        error_num_sample_histories[metric])
     for metric in eval_env.metrics:
         episode_info[f'overall-{metric}'] = all_episodes_accumulator[metric][
             'error'] / all_episodes_accumulator[metric]['num_samples']
