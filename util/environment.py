@@ -14,6 +14,7 @@ from .policy_codec import make_state, set_usher_param, get_coil_x_from_com
 from .buoy_spec import BuoySpec
 from .io import read_pile
 from .rigid_interpolator import BuoyInterpolator
+from . import read_alu
 
 
 class Environment:
@@ -149,7 +150,9 @@ class Environment:
         self.recon_voxel_size = self.recon_raster_radius / np.sqrt(3.0)
 
         ## ================== container
-        self.container_width = self.unit.from_real_length(0.24)
+        self.container_width_real = 0.24
+        self.container_width = self.unit.from_real_length(
+            self.container_width_real)
         container_dim = self.dp.f3(self.container_width, self.container_width,
                                    self.container_width)
         container_distance = self.dp.BoxDistance.create(container_dim,
@@ -225,6 +228,8 @@ class Environment:
         self.squared_error = None
         self.buoy_reward_mask = None
         self.buoy_x = self.dp.create_coated((self.max_num_buoys), 3)
+        self.particle_guiding_norm = self.dp.create_coated(
+            (self.solver.max_num_particles), 1)
 
         if 'statistical' in self.metrics:
             self.partial_histogram = self.dp.create_coated(
@@ -243,6 +248,11 @@ class Environment:
             self.quantized4s_truth = dp.create_coated(
                 ((truth_max_num_beads - 1) // 4 + 1), 1, np.uint32)
             self.max_v_bin = 0.25
+        if 'potential_energy' in self.metrics:
+            self.bead_y_sim = self.dp.create_coated(
+                (self.solver.max_num_particles), 1)
+            self.bead_y_truth = self.dp.create_coated((truth_max_num_beads), 1)
+            self.bead_truth = self.dp.create_coated((truth_max_num_beads), 3)
 
         self.truth_real_freq = 100.0
         self.truth_real_interval = 1.0 / self.truth_real_freq
@@ -340,8 +350,10 @@ class Environment:
             for trajectory in buoy_trajectories
         ]
 
-    def reset_volumetric(self):
-        if 'volumetric' in self.metrics:
+    def reset_volumetric_height_field(self):
+        evalute_height_field = 'height_field' in self.metrics
+        evalute_volumetric = 'volumetric' in self.metrics
+        if evalute_volumetric or evalute_height_field:
             agitator_option = np.load(
                 f'{self.truth_dir}/agitator_option.npy').item()
             self.agitator_ls = alluvol.create_mesh_level_set(
@@ -352,6 +364,15 @@ class Environment:
                     self.solver.num_particles))
             self.baseline_ls = alluvol.create_liquid_level_set(
                 baseline_x, self.recon_raster_radius, self.recon_voxel_size)
+            if evalute_height_field:
+                self.sample_layer_x = np.copy(
+                    read_alu(f'{self.truth_dir}/sample-x.alu'))
+                self.sample_layer_x[:, 1] = 10.0
+                self.baseline_ls.setGridClassAsLevelSet()
+                self.baseline_hf = alluvol.LevelSetRayIntersector(
+                    self.baseline_ls).probe_heights(
+                        self.sample_layer_x,
+                        default_value=-self.container_width_real * 0.5)
 
     def reset_statistical(self):
         if 'statistical' in self.metrics:
@@ -364,11 +385,33 @@ class Environment:
                                             self.bead_v_sim, 0, self.max_v_bin,
                                             self.solver.num_particles)
 
+    def reset_potential_energy(self):
+        if 'potential_energy' in self.metrics:
+            self.runner.extract_y(self.solver.particle_x, self.bead_y_sim,
+                                  self.solver.num_particles)
+            self.bead_y_sim.scale(self.unit.to_real_length(1))
+            y_sum_sim = self.runner.sum(self.bead_y_sim,
+                                        self.solver.num_particles)
+            self.mean_y_sim = y_sum_sim / self.solver.num_particles
+            y_diff_sim = self.bead_y_sim.get(
+                self.solver.num_particles) - self.mean_y_sim
+            self.pe_baseline = np.mean(y_diff_sim * y_diff_sim)
+
+            self.bead_truth.read_file(f'{self.truth_dir}/x-0.alu')
+            self.runner.extract_y(self.bead_truth, self.bead_y_truth,
+                                  self.truth_num_beads)
+            y_sum_truth = self.runner.sum(
+                self.bead_y_truth, self.truth_num_beads)  # real unit already
+            self.mean_y_truth = y_sum_truth / self.truth_num_beads
+
     def reset_solver_properties(self):
         self.real_density0 = np.load(f'{self.truth_dir}/density0_real.npy')
         self.unit = Unit(real_kernel_radius=self.unit.rl,
                          real_density0=self.real_density0,
                          real_gravity=self.unit.rg)
+        self.truth_unit = Unit(real_kernel_radius=2**-8,
+                               real_density0=self.real_density0,
+                               real_gravity=self.unit.rg)
         self.kinematic_viscosity_real = np.load(
             f'{self.truth_dir}/kinematic_viscosity_real.npy').item()
 
@@ -418,8 +461,9 @@ class Environment:
         self.reset_solver_properties()
         self.reset_solver_initial()
         # reward/score related
-        self.reset_volumetric()
+        self.reset_volumetric_height_field()
         self.reset_statistical()
+        self.reset_potential_energy()
         self.dp.copy_cn_external(self.cn, self.cni)
 
         self.dp.map_graphical_pointers()
@@ -519,6 +563,46 @@ class Environment:
         baseline = baseline_error_ls.calculate_volume()
         return error, local_errors, baseline, 1
 
+    def calculate_height_field_error(self,
+                                     episode_t,
+                                     compute_local_errors=False):
+        local_errors = None  # TODO: to be implemented
+        if compute_local_errors:
+            raise Exception(
+                "Local rewards are unsupported for height field error")
+        truth_vdb_filename = f'{self.truth_dir}/x-{episode_t}-resampled6.vdb'
+        truth_ls = alluvol.FloatGrid.read(truth_vdb_filename)
+        truth_ls.setGridClassAsLevelSet()
+        truth_hf = alluvol.LevelSetRayIntersector(truth_ls).probe_heights(
+            self.sample_layer_x,
+            default_value=-self.container_width_real * 0.5)
+
+        recon_x = self.unit.to_real_length(
+            self.dp.coat(self.solver.particle_x).get(
+                self.solver.num_particles))
+        recon_ls = alluvol.create_liquid_level_set(recon_x,
+                                                   self.recon_raster_radius,
+                                                   self.recon_voxel_size)
+        recon_ls.setGridClassAsLevelSet()
+        recon_hf = alluvol.LevelSetRayIntersector(recon_ls).probe_heights(
+            self.sample_layer_x,
+            default_value=-self.container_width_real * 0.5)
+        recon_diff = recon_hf - truth_hf
+
+        baseline_diff = self.baseline_hf - truth_hf
+
+        if self.save_visual and self.save_dir_visual is not None:
+            np.save(f"{str(self.save_dir_visual)}/truth-hf-{episode_t}.npy",
+                    truth_hf)
+            np.save(f"{str(self.save_dir_visual)}/recon-hf-{episode_t}.npy",
+                    recon_hf)
+            np.save(
+                f"{str(self.save_dir_visual)}/baseline-hf-error-{episode_t}.npy",
+                baseline_diff)
+        error = np.sum(recon_diff * recon_diff)
+        baseline = np.sum(baseline_diff * baseline_diff)
+        return error, local_errors, baseline, 1
+
     def calculate_eulerian_error(self,
                                  episode_t,
                                  use_mask=False,
@@ -609,6 +693,47 @@ class Environment:
             self.solver.num_particles, self.truth_num_beads)
         return error, local_errors, baseline, 1
 
+    def calculate_potential_energy_error(self, episode_t,
+                                         compute_local_errors):
+        local_errors = None
+        if compute_local_errors:
+            raise Exception(
+                "Local rewards are unsupported for potential energy")
+        self.runner.extract_y(self.solver.particle_x, self.bead_y_sim,
+                              self.solver.num_particles)
+        self.bead_y_sim.scale(self.unit.to_real_length(1))
+
+        y_sum_sim = self.runner.sum(self.bead_y_sim, self.solver.num_particles)
+        y_diff_sim = self.bead_y_sim.get(
+            self.solver.num_particles) - self.mean_y_sim
+        pe_sim = np.mean(y_diff_sim * y_diff_sim)
+
+        self.bead_truth.read_file(f'{self.truth_dir}/x-{episode_t}.alu')
+        self.runner.extract_y(self.bead_truth, self.bead_y_truth,
+                              self.truth_num_beads)
+        y_sum_truth = self.runner.sum(
+            self.bead_y_truth, self.truth_num_beads)  # real unit already
+        self.mean_y_truth = y_sum_truth / self.truth_num_beads
+        y_diff_truth = self.bead_y_truth.get(
+            self.truth_num_beads) - self.mean_y_truth
+        # print('mean_y_sim', self.mean_y_sim, 'mean_y_truth', self.mean_y_truth)
+        print(
+            'pressure mean',
+            self.runner.sum(self.solver.particle_pressure,
+                            self.solver.num_particles) /
+            self.solver.num_particles)
+        pe_truth = np.mean(y_diff_truth * y_diff_truth)
+
+        # print(pe_sim, self.pe_baseline, pe_truth)
+
+        error = pe_sim - pe_truth
+        error = error * error
+
+        baseline = self.pe_baseline - pe_truth
+        baseline = baseline * baseline
+
+        return error, local_errors, baseline, 1
+
     def calculate_reward(self, episode_t, compute_local_rewards):
         step_info = {}
         reward = 0
@@ -622,6 +747,10 @@ class Environment:
                 error_fn = self.calculate_statistical_error
             elif metric == "volumetric":
                 error_fn = self.calculate_volumetric_error
+            elif metric == "height_field":
+                error_fn = self.calculate_height_field_error
+            elif metric == "potential_energy":
+                error_fn = self.calculate_potential_energy_error
             else:
                 raise Exception(f"Unrecognized metric: {metric}")
             error, local_errors, baseline, num_samples = error_fn(

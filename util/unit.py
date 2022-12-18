@@ -2,6 +2,7 @@ import numpy as np
 
 
 class Unit:
+
     def __init__(self, real_kernel_radius, real_density0, real_gravity):
         self.rdensity0 = real_density0
         self.rg = real_gravity
@@ -114,3 +115,15 @@ class Unit:
     def to_real_pressure(self, p):
         return p * (self.rdensity0 * self.rl * self.rl * self.inv_rt *
                     self.inv_rt)
+
+    def from_real_energy(self, energy):
+        return energy * (self.inv_rm * self.inv_rg * self.inv_rl)
+
+    def to_real_energy(self, energy):
+        return energy * (self.rm * self.rg * self.rl)
+
+    def from_real_force(self, f):
+        return f * (self.inv_rm * self.inv_rg)
+
+    def to_real_force(self, f):
+        return f * (self.rm * self.rg)
