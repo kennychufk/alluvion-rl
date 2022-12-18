@@ -200,7 +200,7 @@ class Environment:
         self.cni.max_num_particles_per_cell = 64
         self.cni.max_num_neighbors_per_particle = 64
 
-        self._max_episode_steps = 1000
+        self._max_episode_steps = 2000
         self.solver = self.dp.SolverI(self.runner,
                                       self.pile,
                                       self.dp,
@@ -792,12 +792,20 @@ class Environment:
                         f'{str(self.save_dir_visual)}/x-{self.next_visual_frame_id}.alu',
                         self.solver.num_particles)
                 self.next_visual_frame_id += 1
+        self.runner.norm(self.solver.particle_guiding,
+                         self.particle_guiding_norm, self.solver.num_particles)
+        guiding_mean = self.runner.sum(
+            self.particle_guiding_norm,
+            self.solver.num_particles) / self.solver.num_particles
 
         new_state = self.collect_state(self.episode_t + 1)
+        # no real unit conversion because arbitrary scaling is employed
+        guiding_regularization = guiding_mean / new_state[0, -1] * 2e-6
 
         # find reward
         reward, local_rewards, step_info = self.calculate_reward(
             self.episode_t + 1, compute_local_rewards)
+        reward -= guiding_regularization
         grid_anomaly = self.dp.coat(
             self.solver.grid_anomaly).get()[0]  # TODO: use sum
 
