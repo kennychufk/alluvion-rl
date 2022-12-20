@@ -147,6 +147,28 @@ print('grid_offset', cni.grid_offset)
 target_t = unit.from_real_time(10)
 offset_y_interval = 0.001
 tenth_second_frame_id = np.argmax(interpolator.t > 10)
+
+min_x = 9999
+max_x = -9999
+min_z = 9999
+max_z = -9999
+for t in np.arange(0.0, target_t, unit.from_real_time(0.01)):
+    pos = interpolator.get_x(unit.to_real_time(t))
+    print(pos)
+    if pos.x < min_x:
+        min_x = pos.x
+    if pos.x > max_x:
+        max_x = pos.x
+    if pos.z < min_z:
+        min_z = pos.z
+    if pos.z > max_z:
+        max_z = pos.z
+
+offset_x = (min_x + max_x) * -0.5
+offset_z = (min_z + max_z) * -0.5
+print(f'min_x = {min_x} max_x = {max_x} offset_x = {offset_x}')
+print(f'min_z = {min_z} max_z = {max_z} offset_z = {offset_z}')
+
 for agitator_id in agitator_ids:
     offset_y_min = 0.24 * -0.5 - np.min(
         interpolator.x[:tenth_second_frame_id, 1]) - unit.to_real_length(
@@ -158,10 +180,10 @@ for agitator_id in agitator_ids:
     print('offset_y_max', offset_y_max)
     for offset_y in np.arange(offset_y_min, offset_y_max, offset_y_interval):
         collided = False
-        for t in np.arange(0.0, target_t, unit.from_real_time(10)):
+        for t in np.arange(0.0, target_t, unit.from_real_time(0.01)):
             pile.x[agitator_id] = unit.from_real_length(
                 interpolator.get_x(unit.to_real_time(t)) +
-                dp.f3(0, offset_y, 0))
+                dp.f3(offset_x, offset_y, offset_z))
             pile.q[agitator_id] = dp.f4(
                 interpolator.get_q(unit.to_real_time(t)))
             pile.copy_kinematics_to_device()
@@ -178,5 +200,5 @@ for agitator_id in agitator_ids:
             offset_path = offset_dir.joinpath(
                 f'{input_path.stem}.{agitator_postfix}.npy')
             print(offset_path)
-            np.save(str(offset_path), np.array([0, offset_y, 0]))
+            np.save(str(offset_path), np.array([offset_x, offset_y, offset_z]))
             break
