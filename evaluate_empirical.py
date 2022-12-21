@@ -1,11 +1,12 @@
 import argparse
+import pickle
 
 import alluvion as al
 import numpy as np
 import wandb
 
 from rl import TD3, OrnsteinUhlenbeckProcess, GaussianNoise
-from util import Environment, EnvironmentPIV, eval_agent
+from util import Environment, EnvironmentPIV, eval_agent, get_timestamp_and_hash
 
 parser = argparse.ArgumentParser(description='RL evaluation')
 parser.add_argument('--cache-dir', type=str, default='.')
@@ -47,6 +48,8 @@ piv_mode = (args.piv == 1)
 eval_learning_curve = (args.model_iteration < 0)
 save_visual = not eval_learning_curve
 report_state_action = not eval_learning_curve
+# save_visual = True
+# report_state_action = True
 
 if piv_mode:
     val_dirs = [
@@ -111,7 +114,7 @@ if eval_learning_curve:
                 print('step id mismatch')
             if (not key.startswith('gradients/') and not key.startswith('_')):
                 log_object[key] = row[key]
-        # NOTE: to resume evaluteion. The following number should be the last step number seen in wandb console for 'score' + 2
+        # NOTE: to resume evaluteion. The following number should be the last step number seen in wandb console for 'score' + 2 (should end with 99)
         if episode_id < 0:
             wandb.log(log_object)
             continue
@@ -138,3 +141,7 @@ else:
                run_id=args.run_id,
                model_iteration=args.model_iteration)
     print(episode_info)
+    timestamp_str, timestamp_hash = get_timestamp_and_hash()
+    with open(f'{args.run_id}-{args.model_iteration}-{timestamp_str}.pickle',
+              'wb') as f:
+        pickle.dump(episode_info, f, pickle.HIGHEST_PROTOCOL)
