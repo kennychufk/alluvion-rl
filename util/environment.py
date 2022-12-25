@@ -63,9 +63,6 @@ class Environment:
         simulation_sampling.sample_x.scale(self.unit.from_real_length(1))
         return simulation_sampling
 
-    def init_real_kernel_radius(self):
-        self.real_kernel_radius = 2**-6
-
     def init_container_pellet_file(self):
         self.container_pellet_filename = f'{self.cache_dir}/cube24-{self.real_kernel_radius}.alu'
 
@@ -79,7 +76,8 @@ class Environment:
                  save_visual=False,
                  reward_metric='eulerian',
                  evaluation_metrics=None,
-                 shape_dir=None):
+                 shape_dir=None,
+                 quick_mode=True):
         self.dp = dp
         self.cn, self.cni = self.dp.create_cn()
         self.display = display
@@ -90,6 +88,7 @@ class Environment:
         self.volume_method = volume_method
         self.cache_dir = cache_dir
         self.save_visual = save_visual
+        self.quick_mode = quick_mode
 
         self.reward_metric = reward_metric
         self.metrics = {}
@@ -101,7 +100,7 @@ class Environment:
                     self.metrics[metric] = 0
 
         # === constants
-        self.init_real_kernel_radius()
+        self.real_kernel_radius = 2**-6 if quick_mode else 0.011
         self.init_container_pellet_file()
         particle_radius = 0.25
         kernel_radius = 1.0
@@ -200,7 +199,7 @@ class Environment:
         self.cni.max_num_particles_per_cell = 64
         self.cni.max_num_neighbors_per_particle = 64
 
-        self._max_episode_steps = 2000
+        self._max_episode_steps = 1000
         self.solver = self.dp.SolverI(self.runner,
                                       self.pile,
                                       self.dp,
@@ -211,10 +210,14 @@ class Environment:
                                       cn=self.cn,
                                       cni=self.cni,
                                       graphical=display)
-        self.solver.max_dt = self.unit.from_real_time(0.0005)
+        if quick_mode:
+            self.solver.max_dt = self.unit.from_real_time(0.0005)
+            self.solver.cfl = 0.2
+        else:
+            self.solver.max_dt = self.unit.from_real_time(0.0004)
+            self.solver.cfl = 0.16
         self.solver.initial_dt = self.solver.max_dt
         self.solver.min_dt = 0
-        self.solver.cfl = 0.2
         self.usher_sampling = FluidSamplePellets(
             self.dp, np.zeros(
                 (max_num_buoys, 3), self.dp.default_dtype), self.cni
@@ -791,6 +794,11 @@ class Environment:
                     self.visual_x_scaled.write_file(
                         f'{str(self.save_dir_visual)}/x-{self.next_visual_frame_id}.alu',
                         self.solver.num_particles)
+                    self.pile.write_file(
+                        f'{str(self.save_dir_visual)}/{self.next_visual_frame_id}.pile',
+                        self.unit.to_real_length(1),
+                        self.unit.to_real_velocity(1),
+                        self.unit.to_real_angular_velocity(1))
                 self.next_visual_frame_id += 1
         self.runner.norm(self.solver.particle_guiding,
                          self.particle_guiding_norm, self.solver.num_particles)
@@ -829,9 +837,6 @@ class Environment:
 
 class EnvironmentPIV(Environment):
 
-    def init_real_kernel_radius(self):
-        self.real_kernel_radius = 0.011
-
     def init_container_pellet_file(self):
         self.container_pellet_filename = f'{self.cache_dir}/cube24-0.011.alu'
 
@@ -867,7 +872,8 @@ class EnvironmentPIV(Environment):
                          volume_method,
                          save_visual,
                          reward_metric=None,
-                         evaluation_metrics=['eulerian_masked'])
+                         evaluation_metrics=['eulerian_masked'],
+                         quick_mode=False)
         self.container_shift = dp.f3(0, self.container_width * 0.5, 0)
         self.pile.x[0] = self.container_shift
         self.cni.grid_offset.y = -4
@@ -875,6 +881,7 @@ class EnvironmentPIV(Environment):
         self.buoy_filter_postfix = buoy_filter_postfix
         self.truth_real_freq = 500.0  # TODO: change to 100Hz
         self.truth_real_interval = 1.0 / self.truth_real_freq
+        self._max_episode_steps = 2000
 
     def get_simulation_sampling(self, truth_dir):
         sample_x_piv = np.load(f'{truth_dir}/mat_results/pos.npy').reshape(

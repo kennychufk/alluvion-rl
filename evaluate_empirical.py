@@ -15,6 +15,7 @@ parser.add_argument('--shape-dir', type=str, default=None)
 parser.add_argument('--display', type=bool, default=False)
 parser.add_argument('--run-id', type=str, required=True)
 parser.add_argument('--model-iteration', type=int, default=-1)
+parser.add_argument('--quick-mode', type=int, default=1)
 parser.add_argument('--evaluation-metrics',
                     nargs='+',
                     default=['eulerian_masked'])
@@ -46,6 +47,7 @@ agent = TD3(actor_lr=config['actor_lr'],
 
 piv_mode = (args.piv == 1)
 eval_learning_curve = (args.model_iteration < 0)
+quick_mode = (args.quick_mode == 1)
 save_visual = not eval_learning_curve
 report_state_action = not eval_learning_curve
 # save_visual = True
@@ -96,7 +98,8 @@ else:
                       display=args.display,
                       save_visual=save_visual,
                       evaluation_metrics=args.evaluation_metrics,
-                      shape_dir=args.shape_dir)
+                      shape_dir=args.shape_dir,
+                      quick_mode=quick_mode)
 
 if eval_learning_curve:
     history = run.scan_history(keys=None,
