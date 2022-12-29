@@ -10,7 +10,8 @@ def populate_plt_settings(plt):
         # Make the legend/label fonts a little smaller
         "legend.fontsize": 8,
         "xtick.labelsize": 8,
-        "ytick.labelsize": 8
+        "ytick.labelsize": 8,
+        "axes.titlesize": 8,
     })
     plt.style.use('seaborn-whitegrid')
 
