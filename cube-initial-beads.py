@@ -54,7 +54,7 @@ print('parameterized nu',
 cni.max_num_particles_per_cell = 64
 cni.max_num_neighbors_per_particle = 64
 
-container_pellet_filename = f'/home/kennychufk/workspace/pythonWs/alluvion-optim/cube24-{real_kernel_radius}.alu'
+container_pellet_filename = f'geometry-data/cube24-{real_kernel_radius}.alu'  # TODO: use shape_dir
 
 container_num_pellets = dp.get_alu_info(container_pellet_filename)[0][0]
 num_pellets = container_num_pellets
