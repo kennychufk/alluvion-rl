@@ -11,6 +11,13 @@ piv_truth_dirs = [
     '/media/kennychufk/vol1bk0/20210416_120534/',
     '/media/kennychufk/vol1bk0/20210416_114327',  # 8
     '/media/kennychufk/vol1bk0/20210416_115523',  # 9
+    # freehand
+    '/media/kennychufk/vol1bk0/20210416_154851',  # water
+    '/media/kennychufk/vol1bk0/20210416_155948',  # water
+    '/media/kennychufk/vol1bk0/20210416_161703',  # water
+    '/media/kennychufk/vol1bk0/20210416_162740',  # water
+    '/media/kennychufk/vol1bk0/20210416_164544-slightly-wrong-focus',  # gwm
+    '/media/kennychufk/vol1bk0/20210416_165720',  # gwm
 ]
 
 for truth_dir in piv_truth_dirs:

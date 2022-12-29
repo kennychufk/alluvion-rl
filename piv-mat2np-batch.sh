@@ -34,9 +34,9 @@ python piv-mat2np.py /media/kennychufk/vol1bk0/20210415_123059/mat_results origi
 # python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_115523/mat_results filtered
 # python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_120534/mat_results filtered
 # 
-# python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_154851/mat_results filtered
-# python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_155948/mat_results filtered
-# python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_161703/mat_results filtered
-# python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_162740/mat_results filtered
-# python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_164544-slightly-wrong-focus/mat_results filtered
-# python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_165720/mat_results filtered
+python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_154851/mat_results original
+python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_155948/mat_results original
+python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_161703/mat_results original
+python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_162740/mat_results original
+python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_164544-slightly-wrong-focus/mat_results original
+python piv-mat2np.py /media/kennychufk/vol1bk0/20210416_165720/mat_results original
