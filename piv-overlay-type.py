@@ -1,207 +1,161 @@
-import os
-import sys
 import argparse
-import shutil
-import glob
+import os
 import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
 from numpy import linalg as LA
 from scipy import ndimage
 from scipy import interpolate
-import subprocess
-import matplotlib.pyplot as plt
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-import matplotlib as mpl
-import scipy.io as sio
-import seaborn as sns
-import matplotlib
-import pandas as pd
-from joblib import Parallel, delayed
+
 matplotlib.use('Agg')
 
-parser = argparse.ArgumentParser(description='PIV masking')
-parser.add_argument('--piv-dir-name', type=str, required=True)
-parser.add_argument('--agitator-thickness', type=float, default=0.0)
-parser.add_argument('--output-image', type=bool, default=False)
+parser = argparse.ArgumentParser()
+parser.add_argument("-r",
+                    "--recon-directory",
+                    type=str,
+                    required=True,
+                    help="reconstruction directory")
+parser.add_argument("-i", "--input-prefix", type=str, default="beads")
+parser.add_argument("-f", "--filter", type=int, default=200)
+parser.add_argument("--trajectory", type=str, default="diagonal")
 args = parser.parse_args()
 
-piv_dir_name = args.piv_dir_name
-agitator_thickness = args.agitator_thickness
 
-containing_dir = f'/media/kennychufk/vol1bk0/{piv_dir_name}/'
-pos = np.load(f'{containing_dir}/mat_results/pos.npy')
-vel = np.load(f'{containing_dir}/mat_results/vel_filtered.npy')
+def render_graph(recon_dir, frame_id, input_prefix, filter_size, error_history,
+                 baseline_history, trajectory):
+    error_filtered = ndimage.uniform_filter(error_history,
+                                            size=filter_size,
+                                            mode='mirror')
+    baseline_filtered = ndimage.uniform_filter(baseline_history,
+                                               size=filter_size,
+                                               mode='mirror')
+    score_filtered = 1 - error_filtered / baseline_filtered
 
-image_dim = 1024
-calxy = np.load(f'{containing_dir}/calxy.npy').item()
-offset_x = np.load(f'{containing_dir}/offset_x.npy').item()
-offset_y = np.load(f'{containing_dir}/offset_y.npy').item()
-num_points_per_row = pos.shape[1]
-pix_point_interval = image_dim / (num_points_per_row + 1)
-pos_x = pos[..., 0]
-pix_x = np.rint((pos[..., 0] + offset_x) / calxy).astype(int)
-pix_y = image_dim + np.rint((-pos[..., 1] - offset_y) / calxy).astype(int)
-if agitator_thickness > 0:
-    robot_filename = glob.glob(f'{containing_dir}/Trace*.csv')[0]
-    robot_frames = pd.read_csv(
-        robot_filename,
-        comment='"',
-        names=['tid', 'j0', 'j1', 'j2', 'j3', 'j4', 'j5', 'x', 'y', 'z', 'v'])
-    agitator_x = robot_frames['y'].to_numpy() / 1000.0
-output_postfix = f'-at{agitator_thickness}' if agitator_thickness > 0 else ''
+    fps = 30
+    t = frame_id / fps
+    my_dpi = 60
+    img_filename = f"{recon_dir}/{input_prefix}{frame_id}.png"
 
-hyphen_position = piv_dir_name.find('-')
-frame_prefix = piv_dir_name if hyphen_position < 0 else piv_dir_name[:
-                                                                     hyphen_position]
+    fig = plt.figure(figsize=[1920 // my_dpi, 1080 // my_dpi],
+                     dpi=my_dpi,
+                     frameon=False)
+    img_ax = plt.Axes(fig, [0., 0., 1., 1.])
+    fig.add_axes(img_ax)
+    img = plt.imread(img_filename)
 
-cmap = sns.color_palette("vlag", as_cmap=True)
+    img_ax.imshow(img, cmap='gray')
+    img_ax.set_axis_off()
 
-piv_freq = 500.0
-robot_freq = 200.0
+    ax_box = fig.add_axes([0.305, 0.591, 0.355, 0.379])
+    ax_box.xaxis.set_visible(False)
+    ax_box.yaxis.set_visible(False)
+    #     ax_box.set_zorder(1000)
+    ax_box.patch.set_alpha(0.5)
+    ax_box.patch.set_color('white')
 
-if agitator_thickness > 0:
-    with open(f"{containing_dir}/robot-time-offset") as f:
-        piv_offset = int(f.read())
-        print('offset =', piv_offset)
+    ax_score = fig.add_axes([0.35, 0.638, 0.3, 0.3])
+    cmap = plt.get_cmap("tab10")
+    piv_freq = 500
+    ts = np.arange(len(score_filtered)) / piv_freq
+    ax_score.plot(ts, score_filtered)
+    ax_score.set_xlabel(r'$t$ (s)')
+    ax_score.set_ylim(0, 1)
+    ax_score.set_ylabel(r"2D Eulerian score", rotation='horizontal')
+    ax_score.yaxis.set_label_coords(0, 1.04)
+    ax_score.set_xlim(0, 20)
 
+    if trajectory == 'diagonal':
+        ax_score.axvspan(0.833, 4.85, color=cmap(1), alpha=0.5)
+        ax_score.axvspan(5.083, 9.1, color=cmap(3), alpha=0.5)
+        ax_score.annotate("Diagonal 1",
+                          xy=(2.7, 0.9),
+                          xycoords="data",
+                          va="center",
+                          ha="center",
+                          bbox=dict(boxstyle="square,pad=0.3",
+                                    fc="w",
+                                    ec="black",
+                                    lw=1.5,
+                                    alpha=0.5))
 
-def render_field(containing_dir, frame_prefix, frame_id, pix_x, pix_y, cmap,
-                 visualize):
-    my_dpi = 128
-    img_a_filename = f"{containing_dir}/{frame_prefix}{frame_id+1:06d}.tif"
-    if visualize:
-        fig = plt.figure(figsize=[image_dim // my_dpi, image_dim // my_dpi],
-                         dpi=my_dpi,
-                         frameon=False)
-        img_ax = plt.Axes(fig, [0., 0., 1., 1.])
-        fig.add_axes(img_ax)
-    img_a = plt.imread(img_a_filename)
+        ax_score.annotate("Diagonal 2",
+                          xy=(7.4, 0.9),
+                          xycoords="data",
+                          va="center",
+                          ha="center",
+                          bbox=dict(boxstyle="square,pad=0.3",
+                                    fc="w",
+                                    ec="black",
+                                    lw=1.5,
+                                    alpha=0.5))
+    elif trajectory == 'linear-circular':
+        ax_score.axvspan(0.983, 6.78, color=cmap(1), alpha=0.5)
+        ax_score.axvspan(7.15, 10.9, color=cmap(3), alpha=0.5)
+        ax_score.annotate("Linear",
+                          xy=(4.0, 0.9),
+                          xycoords="data",
+                          va="center",
+                          ha="center",
+                          bbox=dict(boxstyle="square,pad=0.3",
+                                    fc="w",
+                                    ec="black",
+                                    lw=1.5,
+                                    alpha=0.5))
 
-    window_size = 44
-    analyze_x0 = int(pix_x[0][0]) - window_size // 2
-    analyze_x1 = int(pix_x[0][-1]) + window_size // 2
-    analyze_y0 = int(pix_y[0][0]) - window_size // 2
-    analyze_y1 = int(pix_y[-1][0]) + window_size // 2
+        ax_score.annotate("Circular",
+                          xy=(9.1, 0.9),
+                          xycoords="data",
+                          va="center",
+                          ha="center",
+                          bbox=dict(boxstyle="square,pad=0.3",
+                                    fc="w",
+                                    ec="black",
+                                    lw=1.5,
+                                    alpha=0.5))
 
-    num_windows_x = (analyze_x1 - analyze_x0) // window_size
-    num_windows_y = (analyze_y1 - analyze_y0) // window_size
+    epsilon = 0.01
+    ax_score.xaxis.set_ticks(np.arange(0, 20 + epsilon, 1))
+    ax_score.yaxis.set_ticks(np.arange(0, 1 + epsilon, 0.1))
 
-    img_a_roi = np.array(img_a[analyze_y0:analyze_y1, analyze_x0:analyze_x1] /
-                         4096,
-                         dtype=np.float32)
+    score_interp = interpolate.interp1d(ts, score_filtered)
 
-    if visualize:
-        img_ax.imshow(img_a, cmap='gray')
-        img_ax.set_axis_off()
-    uv = np.copy(vel[frame_id])
-    u = np.copy(vel[frame_id, ..., 0])
-    v = np.copy(vel[frame_id, ..., 1])
+    if t < 20:
+        ax_score.axvline(x=t, color=cmap(2))
+        inst_score = score_interp(t)
+        if inst_score > -1:
+            ax_score.plot((0, t), (inst_score, inst_score), color=cmap(2))
 
-    valid_mask_inv = np.logical_or(np.isnan(u), np.isnan(v))
-    valid_mask = np.logical_not(valid_mask_inv)
-    # img_ax.scatter(pix_x[valid_mask_inv],
-    #               pix_y[valid_mask_inv],
-    #               c='#888888',
-    #               marker='D')
+    ax_score.patch.set_alpha(0.8)
 
-    # acceleration_mask = np.ones(u.shape, dtype=bool)
-    # if frame_id > 0:
-    #     vel_diff = vel[frame_id] - vel[frame_id - 1]
-    #     acceleration_mask = LA.norm(vel_diff, axis=2) < 0.08
-    # acceleration_mask_inv = np.logical_not(acceleration_mask)
-    # img_ax.scatter(pix_x[acceleration_mask_inv],
-    #               pix_y[acceleration_mask_inv],
-    #               c='#991111',
-    #               marker='x')
+    fig.savefig(f'{recon_dir}/{input_prefix}-graph-{frame_id}.png', dpi=my_dpi)
+    #     [left, bottom, width, height]
 
-    velocity_mask = LA.norm(vel[frame_id], axis=2) < 0.18
-    agitator_mask = np.ones(u.shape, dtype=bool)
-    if agitator_thickness > 0:
-        robot_tid = int((frame_id + piv_offset) / piv_freq * robot_freq)
-        if robot_tid >= 4000:
-            robot_tid = 3999
-        agitator_mask = np.abs(pos_x -
-                               agitator_x[robot_tid]) > agitator_thickness
-
-    uv_norm = LA.norm(uv, axis=2)
-    has_valid_uv = np.sum(np.logical_not(np.isnan(uv_norm))) > 0
-    velocity_std_mask = np.ones(u.shape, dtype=bool)
-    if has_valid_uv:
-        uv_norm_std = np.nanstd(uv_norm)
-        uv_norm_mean = np.nanmean(uv_norm)
-        std_threshold = 1
-        velocity_std_mask = uv_norm > (uv_norm_mean -
-                                       std_threshold * uv_norm_std)
-
-    brightness_mask = np.ones(u.shape, dtype=bool)
-    for window_x in range(num_windows_x):
-        for window_y in range(num_windows_y):
-            brightness = np.mean(
-                img_a_roi[window_y * window_size:(window_y + 1) * window_size,
-                          window_x * window_size:(window_x + 1) * window_size])
-            brightness_mask[window_y, window_x] = (brightness < 0.1)
-    brightness_mask_inv = np.logical_not(brightness_mask)
-    # img_ax.scatter(pix_x[brightness_mask_inv],
-    #               pix_y[brightness_mask_inv],
-    #               c='#aa9921',
-    #               marker='*')
-
-    # # ==== contrast mask PIVlab
-    # img_b_filename = f"{containing_dir}/{frame_prefix}{frame_id+2:06d}.tif"
-    # img_b = plt.imread(img_b_filename)
-    # img_c = img_a + img_b
-    # img_c = img_c / np.max(img_c)
-    # gy = np.diff(img_c, 1, 0)
-    # gy = np.vstack((gy, gy[-1]))
-    # gx = np.diff(img_c, 1, 1)
-    # gx =np.hstack((gx, gx[:, -1, np.newaxis]))
-    # g=(np.abs(gx)+np.abs(gy))/2
-    # filter_size = (np.array([img_a.shape[0]/pix_x.shape[1]+0.5])).astype(int)[0]
-    # gb = ndimage.uniform_filter(g, size=filter_size, mode='nearest')
-    # gq=np.zeros_like(u)
-    # for i in range(pix_x.shape[1]):
-    #     for j in range(len(pix_y)):
-    #         gq[j, i] = gb[pix_y[j][0], pix_x[0][i]]
-    #         # print(j, i, gq[j, i])
-    # percentile_10_position = pix_x.shape[0] * pix_x.shape[1] * 0.4
-    # index0 = int(percentile_10_position)
-    # fraction0 = percentile_10_position - index0
-    # percentile_10_partitioned = np.partition(gq.ravel(), (index0, index0+1))
-    # percentile_10 = percentile_10_partitioned[index0] * (1-fraction0) + percentile_10_partitioned[index0+1] * fraction0
-    # contrast_mask = gq > percentile_10
-    # contrast_mask_inv = np.logical_not(contrast_mask)
-    # img_ax.scatter(pix_x[contrast_mask_inv],
-    #               pix_y[contrast_mask_inv],
-    #               c='#10bb05',
-    #               marker='x')
-    # print(percentile_10)
-
-    mask = agitator_mask & brightness_mask & velocity_mask & valid_mask & velocity_std_mask
-    mag = np.hypot(u, v)
-    if visualize:
-        q = img_ax.quiver(pix_x[mask],
-                          pix_y[mask],
-                          u[mask],
-                          v[mask],
-                          mag[mask],
-                          cmap=cmap,
-                          scale=5)
-        if agitator_thickness > 0:
-            agitator_x_pix = (agitator_x[robot_tid] + offset_x) / calxy
-            if 0 <= agitator_x_pix and agitator_x_pix < image_dim:
-                img_ax.vlines(agitator_x_pix, 0, image_dim - 1)
-        fig.savefig(
-            f'{containing_dir}/gridfield/frame{output_postfix}-{frame_id}.png',
-            dpi=my_dpi)
-        plt.close('all')
-    return mask
+    plt.close('all')
 
 
-os.makedirs(f'{containing_dir}/gridfield', exist_ok=True)
-num_frames = len(vel)
-masks = Parallel(n_jobs=8)(
-    delayed(render_field)(containing_dir, frame_prefix, frame_id, pix_x, pix_y,
-                          cmap, args.output_image)
-    for frame_id in range(num_frames))
-np.save(f'{containing_dir}/mat_results/mask{output_postfix}.npy',
-        np.array(masks).astype(np.uint32))
+plt.rcParams.update({'font.size': 22})
+
+recon_dir = args.recon_directory
+
+metric = 'eulerian_masked'
+error_history = np.load(f'{recon_dir}/{metric}_error.npy')
+baseline_history = np.load(f'{recon_dir}/{metric}_baseline.npy')
+num_samples_history = np.load(f'{recon_dir}/{metric}_num_samples.npy')
+
+baseline_accm = 0
+error_accm = 0
+
+for frame_id in range(len(error_history)):
+    num_samples = num_samples_history[frame_id]
+    if num_samples > 0:
+        baseline_accm += baseline_history[frame_id] / num_samples
+        error_accm += error_history[frame_id] / num_samples
+    # print(num_samples, baseline_accm, error_accm)
+
+print('Score', error_accm / baseline_accm)
+
+num_frames = 587 if args.trajectory == 'diagonal' else 600
+for frame_id in range(num_frames):
+    print(frame_id)
+    render_graph(recon_dir, frame_id, args.input_prefix, args.filter,
+                 error_history, baseline_history, args.trajectory)
