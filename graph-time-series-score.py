@@ -117,8 +117,8 @@ def plot_score(recon_dir, output_prefix, filter_size, error_histories,
     matplotlib.rcParams['axes.unicode_minus'] = False
     fig, ax = plt.subplots(num_rows,
                            num_cols,
-                           figsize=get_fig_size(get_text_width(), ratio=0.2),
-                           dpi=600)
+                           figsize=get_fig_size(get_text_width(), ratio=0.23),
+                           dpi=800)
     cmap = plt.get_cmap("tab10")
 
     metric_names = {
@@ -145,13 +145,17 @@ def plot_score(recon_dir, output_prefix, filter_size, error_histories,
         annotation_bbox = AnnotationBbox(imagebox, (t, 0.5), frameon=False)
         annotation_bbox.set_zorder(2)
         ax.add_artist(annotation_bbox)
-        ax.annotate(f"{t} s",
+        ax.annotate(r"$\SI{" + str(t) + r"}{\second}$",
                     xy=(t, 0.943),
                     xycoords="data",
                     va="center",
-                    ha="center")
-    ax.set_xlabel(r'$t$ (s)')
-    ax.xaxis.set_label_coords(1.04, 0)
+                    ha="center",
+                    bbox=dict(boxstyle="round,pad=0",
+                              facecolor="white",
+                              edgecolor='None',
+                              alpha=0.6))
+    ax.set_xlabel(r'$t (\SI{}{\second})$')
+    ax.xaxis.set_label_coords(0.984, -0.025)
     ax.set_ylabel(r'Score')
     ax.set_ylim(0, 1)
     if len(metrics) == 1:
@@ -205,24 +209,22 @@ def plot_score(recon_dir, output_prefix, filter_size, error_histories,
                           y=0,
                           texty=0.05)
 
-    fig.tight_layout(
-        pad=0.05
-    )  # pad is 1.08 by default https://stackoverflow.com/a/59252633
-
     epsilon = 0.01
-    ax.xaxis.set_ticks(np.arange(1, 10 + epsilon, 0.5))
+    ax.xaxis.set_ticks(np.arange(1, 9.5 + epsilon, 0.5))
     ax.yaxis.set_ticks(np.arange(0, 1 + epsilon, 0.1))
 
-    if len(metrics) > 1 and output_prefix == 'diagonal-time-score':
-        ax.legend(loc='lower right')
-    fig.savefig(
-        f'{output_prefix}.pgf', bbox_inches='tight'
-    )  # bbox_inches='tight' necessary for keeping the time legend inside the canvas
-    with open(f'{output_prefix}.pgf', 'rt') as f:
-        text = f.read()
-        text = text.replace(output_prefix, f'res/{output_prefix}')
-    with open(f'{output_prefix}.pgf', 'wt') as f:
-        f.write(text)
+    if output_prefix == 'diagonal-time-score':
+        ax.legend(loc='upper center',
+                  bbox_to_anchor=(0.92, 0.24),
+                  labelspacing=0.3,
+                  borderpad=0)
+    else:
+        ax.legend(loc='upper center',
+                  bbox_to_anchor=(0.593, 0.24),
+                  labelspacing=0.3,
+                  borderpad=0)
+    fig.tight_layout(pad=0.07)
+    fig.savefig(f'{output_prefix}.pdf')
     plt.close('all')
 
 

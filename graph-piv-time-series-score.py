@@ -115,7 +115,7 @@ def plot_score(recon_dir, output_prefix, filter_size, error_history,
     matplotlib.rcParams['axes.unicode_minus'] = False
     fig, ax = plt.subplots(num_rows,
                            num_cols,
-                           figsize=get_fig_size(get_text_width(), ratio=0.2),
+                           figsize=get_fig_size(get_text_width(), ratio=0.19),
                            dpi=600)
     cmap = plt.get_cmap("tab10")
 
@@ -127,28 +127,29 @@ def plot_score(recon_dir, output_prefix, filter_size, error_history,
     for frame_id in range(7, 36, 4):
         recon_hf1 = matplotlib.image.imread(
             f"{recon_dir}/combined-hf{frame_id}.png")
-        imagebox = OffsetImage(recon_hf1, zoom=0.048, alpha=0.9)
+        imagebox = OffsetImage(recon_hf1, zoom=0.05, alpha=0.9)
         t = frame_interval * frame_id
         annotation_bbox = AnnotationBbox(imagebox, (t, 0.5), frameon=False)
         annotation_bbox.set_zorder(2)
         ax.add_artist(annotation_bbox)
-        ax.annotate(f"{t} s",
+        ax.annotate(r"$\SI{" + str(t) + r"}{\second}$",
                     xy=(t, 0.943),
                     xycoords="data",
                     va="center",
-                    ha="center")
+                    ha="center",
+                    bbox=dict(boxstyle="round,pad=0",
+                              facecolor="white",
+                              edgecolor='None',
+                              alpha=0.6))
 
-    ax.set_xlabel(r'$t$ (s)')
+    ax.set_xlabel(r'$t (\SI{}{\second})$')
+    ax.xaxis.set_label_coords(0.9484, 0.093)
     ax.set_ylim(0, 1)
     ax.set_ylabel(r"2D Eulerian score")
     if is_linear_circle:
         ax.set_xlim(0, 14)
     else:
-        ax.set_xlim(0.833, 19.554)
-
-    fig.tight_layout(
-        pad=0.05
-    )  # pad is 1.08 by default https://stackoverflow.com/a/59252633
+        ax.set_xlim(0.833, 19.5)
 
     if is_diagonal:
         annotate_duration(ax,
@@ -181,14 +182,8 @@ def plot_score(recon_dir, output_prefix, filter_size, error_history,
     ax.xaxis.set_minor_locator(AutoMinorLocator(2))
     ax.grid(which='minor', color='#DDDDDD', linewidth=0.5)
     ax.yaxis.set_ticks(np.arange(0, 1 + epsilon, 0.1))
-    fig.savefig(
-        f'{output_prefix}.pgf', bbox_inches='tight'
-    )  # bbox_inches='tight' necessary for keeping the time legend inside the canvas
-    with open(f'{output_prefix}.pgf', 'rt') as f:
-        text = f.read()
-        text = text.replace(output_prefix, f'res/{output_prefix}')
-    with open(f'{output_prefix}.pgf', 'wt') as f:
-        f.write(text)
+    fig.tight_layout(pad=0.07)
+    fig.savefig(f'{output_prefix}.pdf')
 
 
 metric = 'eulerian_masked'
