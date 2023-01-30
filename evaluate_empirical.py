@@ -19,6 +19,7 @@ parser.add_argument('--quick-mode', type=int, default=1)
 parser.add_argument('--evaluation-metrics',
                     nargs='+',
                     default=['eulerian_masked'])
+parser.add_argument('--unmasked-buoy-ids', nargs='+', type=int)
 parser.add_argument('--piv', type=int, default=0)
 args = parser.parse_args()
 
@@ -78,6 +79,7 @@ if piv_mode:
                          cache_dir=args.cache_dir,
                          ma_alphas=config['ma_alphas'],
                          display=args.display,
+                         unmasked_buoy_ids=args.unmasked_buoy_ids,
                          volume_method=al.VolumeMethod.pellets,
                          save_visual=save_visual)
 else:
