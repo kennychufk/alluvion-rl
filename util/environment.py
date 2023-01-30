@@ -841,8 +841,7 @@ class EnvironmentPIV(Environment):
         self.container_pellet_filename = f'{self.cache_dir}/cube24-0.011.alu'
 
     def get_num_buoys(self, truth_dir):
-        return len(self.unmasked_buoy_ids)
-        # return len(np.load(f'{truth_dir}/rec/marker_ids.npy'))
+        return len(np.load(f'{truth_dir}/rec/marker_ids.npy'))
 
     def find_truth_max_num_beads(self):
         return 0
@@ -862,11 +861,9 @@ class EnvironmentPIV(Environment):
                  cache_dir,
                  ma_alphas,
                  display,
-                 unmasked_buoy_ids,
                  buoy_filter_postfix='-f18',
                  volume_method=al.VolumeMethod.pellets,
                  save_visual=False):
-        self.unmasked_buoy_ids = unmasked_buoy_ids
         super().__init__(dp,
                          truth_dirs,
                          cache_dir,
@@ -915,16 +912,11 @@ class EnvironmentPIV(Environment):
 
     def reset_buoy_interpolators(self):
         used_buoy_ids = np.load(f'{self.truth_dir}/rec/marker_ids.npy')
-        intermediate_buoy_trajectories = [
+        buoy_trajectories = [
             np.load(
                 f'{self.truth_dir}/rec/marker-{used_buoy_id}{self.buoy_filter_postfix}.npy'
             ) for used_buoy_id in used_buoy_ids
         ]
-        buoy_trajectories = [
-            intermediate_buoy_trajectories[unmasked_id]
-            for unmasked_id in self.unmasked_buoy_ids
-        ]
-
         self.buoy_interpolators = [
             BuoyInterpolator(self.dp,
                              sample_interval=0.01,
