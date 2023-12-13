@@ -12,11 +12,11 @@ Our reconstruction method recreates water flow based on only a small amount of d
 </div>   
 
 ## Dependencies
-- [Alluvion](https://github.com/kennychufk/alluvion)
-- [Alluvol](https://github.com/kennychufk/alluvol)
+- [alluvion](https://github.com/kennychufk/alluvion)
+- [alluvol](https://github.com/kennychufk/alluvol)
 
 ## Dataset
-(To be published later)
+(To be added by Feb 2024)
 
 ## Getting started
 (Detailed instructions will be added by Feb 2024)
